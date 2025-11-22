@@ -1,25 +1,47 @@
 import os
 import re
-import pandas as pd 
+import pandas as pd
 from IPython.display import clear_output
 from matplotlib import pyplot as plt
 import numpy as np
 import copy
 
-def aver_list(l, n): 
-    r = len(l)%n
-    c = len(l)-r
-    av = np.array(l[:len(l)-r])
-    if c !=0:
-        av = np.average(np.array(l[:len(l)-r]).reshape(-1, n), axis=1)
-    if r != 0: 
-        av = np.append(av, sum(l[len(l)-r:])/r)
+# def aver_list(l, n):
+#     r = len(l)%n
+#     c = len(l)-r
+#     av = np.array(l[:len(l)-r])
+#     if c !=0:
+#         av = np.average(np.array(l[:len(l)-r]).reshape(-1, n), axis=1)
+#     if r != 0:
+#         av = np.append(av, sum(l[len(l)-r:])/r)
+#     return av
+
+def aver_list(l, n):
+    r = len(l) % n
+    c = len(l) - r
+
+    # 保持原有逻辑：先处理能被 n 整除的部分
+    if c != 0:
+        # 将列表切片并 reshape，然后沿轴 1 求平均
+        av = np.average(np.array(l[:c]).reshape(-1, n), axis=1)
+    else:
+        # 如果列表长度小于 n，初始化为空数组
+        av = np.array([])
+
+    # 修改部分：处理剩余的尾部数据
+    if r != 0:
+        # 计算剩余部分的平均值
+        remainder_val = sum(l[c:]) / r
+        # 【修改点】使用 np.concatenate 替代 np.append
+        # np.concatenate 要求两个参数都是数组，所以要把标量数值用 [] 包起来
+        av = np.concatenate((av, [remainder_val]))
+
     return av
 
 def extract_number(filename):
     match = re.search(r'(\d+)$', filename)
     return int(match.group(1)) if match else -1
-    
+
 def get_the_last_checkpoint(folder_path):
     files = os.listdir(folder_path)
 
@@ -30,9 +52,9 @@ def get_the_last_checkpoint(folder_path):
         return folder_path + "/" + last_file
     else:
         return None
-        
-def get_new_df_interval(name, n, interval): 
-    df = pd.read_csv(name) 
+
+def get_new_df_interval(name, n, interval):
+    df = pd.read_csv(name)
     selected_rows = df[df['nsites'] == n].iloc[interval]
 
     # Creating a new DataFrame
@@ -40,15 +62,15 @@ def get_new_df_interval(name, n, interval):
     return new_df
 
 
-def create_plots(data_list, save = False, show = True, path_to_the_main_dir = None, env_name = None, name = None):  
-    
+def create_plots(data_list, save = False, show = True, path_to_the_main_dir = None, env_name = None, name = None):
+
         font = {'family': 'serif',
 #         'color':  'Black',
         'weight': 'normal',
         'size': 14,
         }
         numb = int(len(data_list)//3) + 1*(int(len(data_list)%3)!=0)
-        if show: 
+        if show:
             clear_output(wait=True)
 
         fig, axes = plt.subplots(numb, 3)
@@ -62,16 +84,16 @@ def create_plots(data_list, save = False, show = True, path_to_the_main_dir = No
             max_data = []
             min_data = []
             for label, data in zip(data_list[item][0],data_list[item][1]):
-                if data_list[item][3] is not None: 
+                if data_list[item][3] is not None:
                     fmt = data_list[item][3]
                 else:
                     fmt = "-"
                 ax.plot(data, fmt, label = label)
                 ax.set_title(item, fontdict=font)
-                
-            if len(data)!= 0 and data_list[item][4] is not None: 
+
+            if len(data)!= 0 and data_list[item][4] is not None:
                 ax.plot(data_list[item][4], min(data)*np.ones(len(data_list[item][4])),'|r')
-                
+
             if type(data_list[item][2]) is np.ndarray or type(data_list[item][2]) is list:
                 ylim = copy.deepcopy(data_list[item][2])
                 if len(data)!= 0 and None not in data:
@@ -81,20 +103,20 @@ def create_plots(data_list, save = False, show = True, path_to_the_main_dir = No
                     ylim[0] = max(min(min_data), ylim[0])
                     if ylim[0] == ylim[1]:
                         ylim = None
-            else: 
+            else:
                     ylim = None
-            ax.set_ylim(ylim)         
+            ax.set_ylim(ylim)
             ax.set_xlabel("Number of steps", fontdict=font)
             ax.legend()
         plt.tight_layout()
-        
-        if show: 
+
+        if show:
             plt.show()
-        if save: 
+        if save:
             if not os.path.exists(path_to_the_main_dir + "/" + 'plots/'):
                 os.makedirs(path_to_the_main_dir + "/" +'plots/')
-    
+
             path_to_save = "{0}".format(env_name)
             fig.savefig(path_to_the_main_dir + "/" +"plots/" + path_to_save + name)
             plt.close(fig)
-            
+
