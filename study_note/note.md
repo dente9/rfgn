@@ -1,9 +1,11 @@
 # utils/calcs_func.py
+
 定位: 项目的 "物理引擎接口"。
 
 作用: 强化学习（RL）本身不懂物理，它只知道输出动作。这个文件负责给每一个晶体结构分配一个 "计算器 (Calculator)"。这个计算器负责根据原子的位置，算出真实的 能量 (Energy) 和 受力 (Forces)，反馈给 RL。
 
 ## 核心知识点：ASE Calculator (计算器)
+
 - 输入: 原子坐标 (Positions) + 原子类型 (Numbers)。
 - 输出: 系统的势能 (Potential Energy) + 每个原子的受力 (Forces) + 应力 (Stress)。
 
@@ -13,9 +15,10 @@
 RL Agent 移动原子 -> 环境调用 Calculator -> 算出受力 -> 如果受力变小了 -> 给 Agent 发奖励。
 
 - EAM (Embedded Atom Method):
-这是一种经验势函数，计算速度非常快，专门用来算金属（如 Al, Fe, Cu 等）。它比量子力学计算（DFT）快几万倍，适合 RL 这种需要跑几百万步训练的场景。
+  这是一种经验势函数，计算速度非常快，专门用来算金属（如 Al, Fe, Cu 等）。它比量子力学计算（DFT）快几万倍，适合 RL 这种需要跑几百万步训练的场景。
 
 # utils/utils.py
+
 定位: 通用辅助函数库 (Utility Functions)。
 
 定位：通用辅助函数库（UtilityFunctions
@@ -26,6 +29,7 @@ RL Agent 移动原子 -> 环境调用 Calculator -> 算出受力 -> 如果受力
     4. 数据筛选：从 CSV 文件中挑选出特定的晶体结构。
 
 # utils/convert_to_graph_e3nn.py
+
 定位: 数据转换器 (Data Converter)。
 输入: Pymatgen 的 Structure 对象（包含原子种类、坐标）和受力 Forces。
 
@@ -46,6 +50,7 @@ x = torch.vstack([torch.Tensor(embedding[number]) for number in structure.atomic
 计算边属性 (Edge Attributes)
 
 # utils/model_e3nn.py
+
 定位: 神经网络大脑 (Neural Network Architectures)。
 作用:
 Actor (Pi): 看到当前结构 -> 决定每个原子怎么动 (输出位移向量)。
@@ -55,53 +60,57 @@ Critic (Q): 看到当前结构 + 拟采取的动作 -> 打分 (这个动作好�
 e3nn：输入旋转，输出也自动、精确地跟着旋转。这对于物理模拟至关重要。
 
 在 e3nn 中，所有数据都有明确的几何类型，叫 Irreps。
+
 - "0e" (标量): 只有大小，没有方向。例如：能量、质量、原子种类。
 - "1o" (矢量): 有大小，有方向。例如：速度、力、位移。
 - "2e" (张量): 更复杂的几何量。
+
 ```
 # 输入特征 Irreps
 self.irreps_in = o3.Irreps("10x0e + 5x1o")
 # 翻译：输入包含 10 个标量特征（如原子属性） 和 5 个矢量特征（如受力、速度）。
 ```
+
 - PeriodicNetwork_Pi (Actor,td3)
-输入：现在的环境状况（晶体结构、当前的受力）。
-输出：动作指令。它告诉每一个原子：“你往东走 0.1 埃，你往西北走 0.05 埃”。
-特点：它的输出是一个向量场（每个原子对应一个 3D 箭头）。
-
+  输入：现在的环境状况（晶体结构、当前的受力）。
+  输出：动作指令。它告诉每一个原子：“你往东走 0.1 埃，你往西北走 0.05 埃”。
+  特点：它的输出是一个向量场（每个原子对应一个 3D 箭头）。
 - PeriodicNetwork_Q (Critic,td3)
-输入：现在的环境状况 + 打算做的动作。
-输出：一个分数 (Q-value)。它预测：“如果按照刚才那个动作走，未来的结构能有多稳定？”
-特点：它的输出是一个标量（只有一个数字，代表好坏）。
-
+  输入：现在的环境状况 + 打算做的动作。
+  输出：一个分数 (Q-value)。它预测：“如果按照刚才那个动作走，未来的结构能有多稳定？”
+  特点：它的输出是一个标量（只有一个数字，代表好坏）。
 - Gaussian_actor (Actor,SAC )
-输入：状态。
-输出：动作的平均值和标准差
-指令：“我感觉应该往右移 0.1 埃左右（均值），但我不太确定，所以我允许你在 0.05 到 0.15 之间随机选一个值（方差）。”
+  输入：状态。
+  输出：动作的平均值和标准差
+  指令：“我感觉应该往右移 0.1 埃左右（均值），但我不太确定，所以我允许你在 0.05 到 0.15 之间随机选一个值（方差）。”
 - Q_func(Critic,SAC )
-输入：当前的晶体结构 (State) + 打算做的动作 (Action)。
-输出：一个分数 (Q-value)。
+  输入：当前的晶体结构 (State) + 打算做的动作 (Action)。
+  输出：一个分数 (Q-value)。
 
 # utils/utils_model.py
+
 - 定位: 基础网络模块库 (Base Network Modules)。
 - 功能:
-1.提供积木: 定义了 Convolution（卷积）和 Gate（门控非线性）的组合方式。
-2.数据预处理: 把原始的 Graph 数据（坐标、边）加工成 e3nn 卷积层能吃的格式（球谐函数编码、距离高斯展开）。
-3.通用父类: Network 和 Network_basic 是 TD3 和 SAC 网络类的父亲。
+  1.提供积木: 定义了 Convolution（卷积）和 Gate（门控非线性）的组合方式。
+  2.数据预处理: 把原始的 Graph 数据（坐标、边）加工成 e3nn 卷积层能吃的格式（球谐函数编码、距离高斯展开）。
+  3.通用父类: Network 和 Network_basic 是 TD3 和 SAC 网络类的父亲。
 
 在 e3nn 中，一个标准的图神经网络层通常由两部分组成：
+
 - Convolution (线性卷积): 负责混合特征（混合不同原子、不同方向的信息）。
 - Gate (门控非线性): 类似于普通神经网络里的 ReLU，但因为矢量（方向）不能直接做 ReLU（方向会被破坏），所以用“门控”机制。
-原理：用一个标量（0~1之间）去乘矢量。比如：标量算出来是 0.5，矢量长度就缩短一半。方向不变！
-Network (用于 TD3)
-Network_basic (用于 SAC)
+  原理：用一个标量（0~1之间）去乘矢量。比如：标量算出来是 0.5，矢量长度就缩短一半。方向不变！
+  Network (用于 TD3)
+  Network_basic (用于 SAC)
 
 # utils/td3.py
+
 - TD3 算法实现
-作用:
-初始化 Actor 和 Critic 网络。
-定义 Loss Function (怎么算误差)。
-定义 Optimizer (怎么更新参数)。
-实现 Train Loop (训练主循环)。
+  作用:
+  初始化 Actor 和 Critic 网络。
+  定义 Loss Function (怎么算误差)。
+  定义 Optimizer (怎么更新参数)。
+  实现 Train Loop (训练主循环)。
 
 A. 初始化 (__init__)
     1.网络 (Networks):
@@ -115,6 +124,11 @@ A. 初始化 (__init__)
 
 B. 动作选择 (get_action)
 
-## TD3知识点
+# utils/replay_memory.py
 
 
+* **定位** **:** **经验回放池 (Replay Buffer)**。
+* **作用**:
+
+  * **存储 (Record)**: 把环境里发生的所有事情(S,A,R,S′,D)**存下来。**
+* **回放 (Sample)**: 训练时，随机抽出一批“往事”给 AI 学习。
