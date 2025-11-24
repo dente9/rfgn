@@ -1,8 +1,8 @@
-import argparse 
-import torch 
-import os 
+import argparse
+import torch
+import os
 import pandas as pd
-from utils.convert_to_graph_e3nn import to_graph 
+from utils.convert_to_graph_e3nn import to_graph
 from utils.model_e3nn import PeriodicNetwork_Pi, PeriodicNetwork_Q
 from utils.td3 import TD3Agent
 from utils.utils import get_the_last_checkpoint, extract_number
@@ -10,9 +10,9 @@ from utils.env import Environment, get_sturct_lib_and_calcs_gen
 
 
 torch.set_default_dtype(torch.float64)
-parser = argparse.ArgumentParser(description='TD3') 
+parser = argparse.ArgumentParser(description='TD3')
 
-#Environment parameters 
+#Environment parameters
 parser.add_argument('--structures_file', type=str, help='Path to the file with input structures')
 parser.add_argument('--interval', type=eval, default=None, help='The range of structures from structures_file that will be used for training')
 parser.add_argument('--eps', type=float, default=0.1, help='Force threshold, eV/A')
@@ -21,7 +21,7 @@ parser.add_argument('--r_weights', type=eval, default=[1, 0, 0.5], help='Weights
 parser.add_argument('--r0', type=float, default=1.5, help='Minimum possible distance between atoms. During relaxations, atoms shift back if the distance between them is less than r0')
 parser.add_argument('--stop_numb', type=int, default=50, help='Maximum number of relaxation steps during which the Agent is allowed to perform actions that are corrected at each step')
 
-# Actor and Critic parameters 
+# Actor and Critic parameters
 parser.add_argument('--r_max', type=float, default=5, help='Maximum radius for the convolution')
 parser.add_argument('--em_dim', type=int, default=10, help = 'Number of neurons in the embedding layer for the force norm')
 parser.add_argument('--noise_clip', type=float, default=0.1, help='Limit for absolute value of target policy smoothing noise')
@@ -34,7 +34,7 @@ parser.add_argument('--q_n_layers', type=int, default=2, help = 'Number of gates
 parser.add_argument('--q_mul', type=int, default=20, help = 'Multiplicity of the Irreps in hidden layers for Critic')
 parser.add_argument('--q_lmax', type=int, default=2, help = 'Maximum order of spherical harmonics in the convolutional layer for Critic')
 
-# Agent parameters  
+# Agent parameters
 parser.add_argument('--random_seed', type=int, default=972, help = 'Seed for random number generators')
 parser.add_argument('--replay_size', type=int, default=int(1e6), help = 'Maximum length of replay buffer')
 parser.add_argument('--gamma', type=float, default=0.9999, help = 'Discount factor')
@@ -52,7 +52,7 @@ parser.add_argument('--noise', type=eval, default=[0.2,0.2], help = 'Noise level
 parser.add_argument('--path_weights', type=str, default=None, help = 'Path to weights corresponding to the structures in the input dataset that represent their priority for selection during training')
 parser.add_argument('--with_weights', type=eval, default=False, help = 'Flag indicating whether structures should be selected during training according to weights or uniformly')
 
-# Training parameters 
+# Training parameters
 parser.add_argument('--path_to_the_main_dir', type=str, default='', help = 'Path to the folder where the results are saved')
 parser.add_argument('--path_load', type=str, default=None, help = 'Path to the model checkpoints')
 parser.add_argument('--train_ep', type=eval, default=[10000,1000], help = '[M_train, N_train]')
@@ -71,39 +71,39 @@ parser.add_argument('--f_max', type=float, default=0.1, help = 'f_max in additio
 parser.add_argument('--noise_level', type=float, default=20, help = 'Noise level in additional greedy exploration')
 parser.add_argument('--nfake', type=int, default=10, help = 'Fake episodes are selected and added to the replay buffer every nfake training steps')
 
-    
+
 
 args = parser.parse_args()
 
 
 s_lib, calcs = get_sturct_lib_and_calcs_gen(args.structures_file, interval = args.interval)
 
-env_kwards = {"input_struct_lib": s_lib, "convert_to_graph_func": to_graph, 
-                "calculator_lib": calcs, "r0":args.r0 , "eps" : args.eps, 
+env_kwards = {"input_struct_lib": s_lib, "convert_to_graph_func": to_graph,
+                "calculator_lib": calcs, "r0":args.r0 , "eps" : args.eps,
                 "reward_func" : args.reward_func, "r_weights": args.r_weights, "stop_numb": args.stop_numb}
 
-actor_feat = {"em_dim" :args.em_dim, 
+actor_feat = {"em_dim" :args.em_dim,
                 "irreps_in":f"12x0e + 1x1o + {args.em_dim}x0e",
-                "irreps_out":"1x1o",   
+                "irreps_out":"1x1o",
                  "noise_clip": args.noise_clip,
-                "irreps_node_attr":"0e",   
-                "layers" : args.pi_n_layers,                             
-                "mul" : args.pi_mul,                                
-                "lmax" : args.pi_lmax,                               
-                "max_radius" : args.r_max,                      
-                "num_neighbors" : args.num_neighbors, 
-                "expl_mode": args.expl_mode,          
+                "irreps_node_attr":"0e",
+                "layers" : args.pi_n_layers,
+                "mul" : args.pi_mul,
+                "lmax" : args.pi_lmax,
+                "max_radius" : args.r_max,
+                "num_neighbors" : args.num_neighbors,
+                "expl_mode": args.expl_mode,
                 "reduce_output" : False}
 
-critic_feat = {"em_dim": args.em_dim, 
-                "irreps_in":f"12x0e + 1x1o + {args.em_dim}x0e + 1x1o + {args.em_dim}x0e",     
-                "irreps_out":"1x0e",         
-                "irreps_node_attr":"0e",   
-                "layers" : args.q_n_layers,                             
-                "mul" : args.q_mul,                                
-                "lmax" : args.q_lmax,                               
-                "max_radius" : args.r_max,                      
-                "num_neighbors" : args.num_neighbors,           
+critic_feat = {"em_dim": args.em_dim,
+                "irreps_in":f"12x0e + 1x1o + {args.em_dim}x0e + 1x1o + {args.em_dim}x0e",
+                "irreps_out":"1x0e",
+                "irreps_node_attr":"0e",
+                "layers" : args.q_n_layers,
+                "mul" : args.q_mul,
+                "lmax" : args.q_lmax,
+                "max_radius" : args.r_max,
+                "num_neighbors" : args.num_neighbors,
                 "reduce_output" : True}
 
 ac_kwards = {"net_actor": PeriodicNetwork_Pi, "net_critic": PeriodicNetwork_Q, "actor_feat": actor_feat, "critic_feat": critic_feat}
@@ -111,11 +111,11 @@ ac_kwards = {"net_actor": PeriodicNetwork_Pi, "net_critic": PeriodicNetwork_Q, "
 if not os.path.exists(args.path_to_the_main_dir):
     os.makedirs(args.path_to_the_main_dir)
 
-if args.path_weights == 'last': 
+if args.path_weights == 'last':
     assert os.path.exists(args.path_to_the_main_dir + "/data")
     args.path_weights = get_the_last_checkpoint(args.path_to_the_main_dir + "/data")
-        
-if args.path_weights is not None: 
+
+if args.path_weights is not None:
     assert os.path.exists(args.path_weights)
     df = pd.read_csv(args.path_weights)
     out = df['Weights'].values[-1].split("\n")
@@ -123,49 +123,49 @@ if args.path_weights is not None:
     for i in range(len(out)):
         wi_t = []
         wi = out[i]
-        if i == 0: 
-            if len(out) == 1: 
+        if i == 0:
+            if len(out) == 1:
                 wi = wi[1:][:-1].split(' ')
-            else: 
+            else:
                 wi = wi[1:].split(' ')
-        elif i == len(out)-1: 
+        elif i == len(out)-1:
             wi = wi[:-1].split(' ')[1:]
-        else: 
+        else:
             wi = wi.split(' ')
 
-        for item in wi: 
+        for item in wi:
             if item !=  '':
                 wi_t.append(float(item))
         wf += wi_t
-else: 
+else:
     wf = None
-    
-    
-a = {"env_fn" : Environment , 
-     "env_kwards" : env_kwards, 
-     "ac_kwargs" : ac_kwards, 
-     "seed": args.random_seed, 
-     "replay_size": args.replay_size, 
-     "gamma": args.gamma, 
-     "polyak": args.polyak, 
-     "pi_lr": args.pi_lr, 
-     "q_lr": args.q_lr, 
-     "batch_size": args.batch_size, 
+
+
+a = {"env_fn" : Environment ,
+     "env_kwards" : env_kwards,
+     "ac_kwargs" : ac_kwards,
+     "seed": args.random_seed,
+     "replay_size": args.replay_size,
+     "gamma": args.gamma,
+     "polyak": args.polyak,
+     "pi_lr": args.pi_lr,
+     "q_lr": args.q_lr,
+     "batch_size": args.batch_size,
      "start_steps": args.start_steps,
-     "update_after": args.update_after, 
-     "update_every": args.update_every, 
-     "target_noise": args.target_noise, 
-     "noise_clip": args.noise_clip, 
-     "policy_delay": args.policy_delay, 
-     "trans_coef": args.trans_coef, 
-     "noise": args.noise, 
-     "init_rewards_for_weights" : wf, 
+     "update_after": args.update_after,
+     "update_every": args.update_every,
+     "target_noise": args.target_noise,
+     "noise_clip": args.noise_clip,
+     "policy_delay": args.policy_delay,
+     "trans_coef": args.trans_coef,
+     "noise": args.noise,
+     "init_rewards_for_weights" : wf,
      "with_weights" : args.with_weights}
 
 
 TD3_Agent = TD3Agent(**a)
 
-if args.path_load == 'last': 
+if args.path_load == 'last':
     assert os.path.exists(args.path_to_the_main_dir + "/checkpoints")
     args.path_load = get_the_last_checkpoint(args.path_to_the_main_dir + "/checkpoints")
     args.start_steps = extract_number(args.path_load)
@@ -180,24 +180,24 @@ if args.start_iter == 0:
     with open(args.path_to_the_main_dir + "/TD3_Agent_arguments.txt", 'w') as f:
         f.write(str(a))
 
-b = {"train_ep" : args.train_ep, 
-     "test_ep" : args.test_ep, 
-     "path_to_the_main_dir" : args.path_to_the_main_dir, 
-     "env_name" : args.env_name, 
-    "e_lim" : args.e_lim, 
-    "net_lim" : args.net_lim, 
-    "save_result" : args.save_result, 
+b = {"train_ep" : args.train_ep,
+     "test_ep" : args.test_ep,
+     "path_to_the_main_dir" : args.path_to_the_main_dir,
+     "env_name" : args.env_name,
+    "e_lim" : args.e_lim,
+    "net_lim" : args.net_lim,
+    "save_result" : args.save_result,
     "start_iter": args.start_iter,
     "test_random": args.test_random,
-    "test_every": args.test_every, 
-    "save_every": args.save_every, 
-     "N_gr" : args.N_gr, 
-     "d_r_max" : args.d_r_max, 
-     "f_max" : args.f_max, 
-     "noise_level" : args.noise_level, 
+    "test_every": args.test_every,
+    "save_every": args.save_every,
+     "N_gr" : args.N_gr,
+     "d_r_max" : args.d_r_max,
+     "f_max" : args.f_max,
+     "noise_level" : args.noise_level,
      "nfake" : args.nfake}
 
 with open(args.path_to_the_main_dir + "/TD3_Agent_train_arguments.txt", 'w') as f:
     f.write(str(b))
-    
-TD3_Agent.train(**b)    
+
+TD3_Agent.train(**b)
