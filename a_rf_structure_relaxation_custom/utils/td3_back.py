@@ -10,41 +10,7 @@ from torch_geometric.data import Batch
 import pandas as pd
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
-import csv
-import re
-
-# ==============================================================================
-# 【实验性参数设置】
-# ==============================================================================
-# 是否启用环境描述符 (Gaussian Radial Fingerprint)
-# True:  在原子属性(12维)的基础上，额外增加局部几何特征，帮助模型感知周围原子的分布。
-# False: 保持原有逻辑，仅使用原子属性。
-USE_ENV_DESCRIPTOR = True
-
-# 描述符的维度 (即把距离展开成多少个高斯波峰)
-# 维度越高，对距离的分辨率越高，但计算量稍增。推荐 8-16。
-DESC_DIM = 8
-# ==============================================================================
-
-
-class GaussianSmearing(nn.Module):
-    """
-    高斯径向基函数，用于将距离标量映射为高维特征向量。
-    相当于给每个原子加了一个“雷达”，感知周围原子的距离分布。
-    """
-    def __init__(self, start=0.0, stop=5.0, n_gaussians=DESC_DIM):
-        super().__init__()
-        offset = torch.linspace(start, stop, n_gaussians)
-        widths = (offset[1] - offset[0]) * torch.ones_like(offset)
-        self.register_buffer("offset", offset)
-        self.register_buffer("widths", widths)
-
-    def forward(self, dist):
-        # dist: [N_edges] -> features: [N_edges, n_gaussians]
-        coeff = -0.5 / (self.widths ** 2)
-        diff = dist.unsqueeze(-1) - self.offset
-        y = torch.exp(coeff * torch.pow(diff, 2))
-        return y
+import csv  # [新增] 用于写 CSV 日志
 
 class Agent(nn.Module):
     r"""The class of TD3 Agent."""
@@ -86,43 +52,6 @@ class TD3Agent:
         torch.manual_seed(seed)
         np.random.seed(seed)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        # --- 【实验性功能：动态修改网络配置】 ---
-        if USE_ENV_DESCRIPTOR:
-            print(f"\n[Experimental] Environment Descriptor ENABLED. Adding {DESC_DIM} radial features.")
-
-            # 初始化高斯基函数工具 (用于 _augment_state)
-            self.r_max = ac_kwargs['actor_feat'].get('max_radius', 5.0)
-            self.smearing = GaussianSmearing(start=0.0, stop=self.r_max, n_gaussians=DESC_DIM).to(self.device)
-
-            # 动态修改 irreps_in (输入维度)
-            # 假设原始是 "12x0e + ...", 我们要把它改成 "(12 + DESC_DIM)x0e + ..."
-            # 我们查找第一个 "x0e" 前面的数字
-            def patch_irreps(irreps_str):
-                # 匹配开头的 "数字x0e"
-                match = re.match(r'(\d+)x0e', irreps_str)
-                if match:
-                    old_dim = int(match.group(1))
-                    new_dim = old_dim + DESC_DIM
-                    new_str = irreps_str.replace(f"{old_dim}x0e", f"{new_dim}x0e", 1)
-                    return new_str
-                return irreps_str
-
-            # 修改 Actor 配置
-            if 'actor_feat' in ac_kwargs:
-                old_in = ac_kwargs['actor_feat']['irreps_in']
-                ac_kwargs['actor_feat']['irreps_in'] = patch_irreps(old_in)
-                print(f"  -> Actor Input changed: {old_in}  ==>  {ac_kwargs['actor_feat']['irreps_in']}")
-
-            # 修改 Critic 配置
-            if 'critic_feat' in ac_kwargs:
-                old_in = ac_kwargs['critic_feat']['irreps_in']
-                ac_kwargs['critic_feat']['irreps_in'] = patch_irreps(old_in)
-                print(f"  -> Critic Input changed: {old_in}  ==>  {ac_kwargs['critic_feat']['irreps_in']}")
-        else:
-            print("\n[Experimental] Environment Descriptor DISABLED.")
-        # -----------------------------------------------------
-
         self.env =  env_fn(**env_kwards)
         self.target_noise = target_noise
         self.noise_clip = noise_clip
@@ -137,7 +66,6 @@ class TD3Agent:
         self.start_steps = start_steps
         self.test_labels = []
 
-        # Create actor-critic module
         self.ac = Agent(**ac_kwargs)
         self.ac_targ = deepcopy(self.ac)
         self.q_params = itertools.chain(self.ac.q1.parameters(), self.ac.q2.parameters())
@@ -147,18 +75,18 @@ class TD3Agent:
 
         self.pi_optimizer = Adam(self.ac.pi.parameters(), lr=pi_lr)
         self.q_optimizer = Adam(self.q_params, lr=q_lr)
+
         self.memory = ReplayMemory(buffer_capacity=replay_size, batch_size = batch_size)
 
         self.with_weights = False if len(env_kwards["input_struct_lib"]) == 1 else with_weights
         if self.with_weights:
             if init_rewards_for_weights is not None:
+                assert len(init_rewards_for_weights) == len(env_kwards["input_struct_lib"])
                 self.rewards_for_weights = np.array(init_rewards_for_weights)
             else:
                 self.rewards_for_weights = []
                 for i in range(len(env_kwards["input_struct_lib"])):
-                    # 注意：这里的 reset 返回的 o 还没有加描述符，但因为只是算权重，不进网络，所以没事
                     o, _, _, _ = self.env.reset(self.trans_coef, i), False, 0, 0
-                    if USE_ENV_DESCRIPTOR: o = self._augment_state(o) # 加上保险
                     _, _, _, _, f, _ = self.env.step(self.get_action(o, 0), 0)
                     self.rewards_for_weights.append(f)
                 self.rewards_for_weights = np.array(self.rewards_for_weights)
@@ -167,45 +95,8 @@ class TD3Agent:
             L = len(env_kwards["input_struct_lib"])
             self.env.weights = np.ones(L)/L
 
-    def _augment_state(self, o):
-        """
-        【核心方法】为状态 o 注入环境描述符。
-        计算每个原子的径向指纹 (Radial Fingerprint) 并拼接到 o.x
-        """
-        if not USE_ENV_DESCRIPTOR:
-            return o
-
-        # o 是 PyG 的 Data 对象，包含 edge_index 和 edge_attr (距离向量)
-        # 我们利用 edge_attr 中的距离信息来计算指纹
-
-        # 1. 获取距离 (o.edge_attr 或者是通过 edge_index 计算)
-        # 假设 o.edge_attr 的第一维是相对坐标 (dx, dy, dz)，norm 就是距离
-        # 如果 o.edge_attr 已经是距离特征(e3nn embedding)，我们需要原始距离。
-        # e3nn 图转换通常会保留原始距离或相对向量。
-        # 让我们直接重新计算距离，确保准确性。
-
-        row, col = o.edge_index
-        # 计算每条边的长度
-        dist = (o.pos[row] - o.pos[col]).norm(dim=-1)
-
-        # 2. 通过高斯函数扩展距离 [N_edges, DESC_DIM]
-        edge_features = self.smearing(dist.to(self.device))
-
-        # 3. 聚合到节点 (Scatter Sum)
-        # 对每个原子 i，把它所有邻居 j 的特征加起来 -> [N_atoms, DESC_DIM]
-        # 这是一个简单的径向分布函数 (RDF) 描述符
-        node_descriptor = torch.zeros(o.num_nodes, DESC_DIM, device=self.device, dtype=o.x.dtype)
-        node_descriptor.index_add_(0, row.to(self.device), edge_features)
-
-        # 4. 拼接到原始节点特征 o.x (原本是 12维)
-        # o.x 现在变成 12 + DESC_DIM 维
-        o.x = torch.cat([o.x.to(self.device), node_descriptor], dim=1)
-
-        return o
-
     def compute_loss_q(self, batch):
         device = self.device
-        # 这里的 batch 数据已经包含了描述符（因为 record 时存的就是 augment 后的）
         o =  Batch.from_data_list(batch["state"].tolist()).to(device)
         o2 = Batch.from_data_list(batch["next_state"].tolist()).to(device)
         a = Batch.from_data_list(batch["action"].tolist()).to(device)
@@ -259,11 +150,6 @@ class TD3Agent:
         return return_dict
 
     def get_action(self, o, noise_scale):
-        # o 已经在 train 循环里被 augment 过了，但在 test 时需要这里处理吗？
-        # train 循环里: o = env.reset() -> augment(o) -> action
-        # 这里的 o 是传入的，我们假设调用者负责 augment，或者我们在这里防御性处理？
-        # 为了逻辑统一，我们在 step/reset 拿到 o 后立即 augment，所以传给 get_action 的 o 应该是已经 augment 过的。
-        # 唯独 initial reset 需要注意。
         a = self.ac.act(o = o, noise_scale = noise_scale).detach().to('cpu')
         return a
 
@@ -287,16 +173,10 @@ class TD3Agent:
         for j in range(N_ep):
             np.random.seed(j)
             num = None if test_random else j % L
-            # Reset -> Augment
-            o_raw, d, ep_ret, ep_disc_ret, ep_len = self.env.reset(self.trans_coef, num, correct = False), False, 0, 0, 0
-            o = self._augment_state(o_raw) # 【注入描述符】
-
+            o, d, ep_ret, ep_disc_ret, ep_len = self.env.reset(self.trans_coef, num, correct = False), False, 0, 0, 0
             self.test_labels.append(self.env.num)
             while not(d or (ep_len == max_test_steps)):
-                # Step -> Augment
-                o_raw, r, d, _, f, _ = self.env.step(self.get_action(o, None))
-                o = self._augment_state(o_raw) # 【注入描述符】
-
+                o, r, d, _, f, _ = self.env.step(self.get_action(o, None))
                 ep_ret += r
                 ep_disc_ret += r*(self.gamma**ep_len)
                 ep_len += 1
@@ -318,6 +198,11 @@ class TD3Agent:
         self.env.current_ase_structure.calc = prev_calc
         return data_to_save_test
 
+
+    # 请确保文件头部有这些导入
+    # import csv
+    # from torch.utils.tensorboard import SummaryWriter
+
     def train(self, train_ep, test_ep, path_to_the_main_dir, env_name, test_every, start_iter = 0, save_every= 1000, e_lim = None, net_lim = None,
               save_result = True, test_random = False, N_gr = 30, d_r_max = 0.015, f_max = 0.1, noise_level = 10, nfake = 10,
               plot_every = 50):
@@ -327,20 +212,22 @@ class TD3Agent:
         df_test = pd.DataFrame(None, columns=['Score', 'Last_step', 'Maximum_force', "Disc_score", 'Score_std', 'Last_step_std', "Maximum_force_std", "Disc_score_std" , "Test_labels", 'Score_med', 'Last_step_med', "Maximum_force_med", "Disc_score_med"])
         df_train = pd.DataFrame(None, columns=["Total_reward", "Last_step_train", "Stop_label_train", "Env_name", "Weights"])
 
+        # 建立目录
         os.makedirs(os.path.join(path_to_the_main_dir, 'data'), exist_ok = True)
+
+        # TensorBoard
         writer = SummaryWriter(log_dir=os.path.join(path_to_the_main_dir, 'logs'))
 
+        # CSV Log (初始化)
         csv_log_path = os.path.join(path_to_the_main_dir, 'logs', 'steps_log.csv')
         os.makedirs(os.path.dirname(csv_log_path), exist_ok=True)
+        # 【修复1】使用 log_file 作为变量名，防止覆盖 f
         with open(csv_log_path, 'w', newline='') as log_file:
             csv_writer = csv.writer(log_file)
             csv_writer.writerow(['Total_Step', 'Episode', 'Ep_Step', 'Reward', 'Max_Force', 'Loss_Q', 'Loss_Pi'])
 
         for i in range(train_ep[0]):
-            # Reset -> Augment
-            o_raw, ep_ret, ep_len = self.env.reset(self.trans_coef), 0, 0
-            o = self._augment_state(o_raw) # 【注入描述符】
-
+            o, ep_ret, ep_len = self.env.reset(self.trans_coef), 0, 0
             max_norm = []
             c_gr = 0
 
@@ -355,14 +242,9 @@ class TD3Agent:
                         c_gr = 0
                     else:
                         a = self.get_action(o, ((self.noise[1] - self.noise[0])/train_ep[1]) * t + self.noise[0])
-
-                    # Step -> Augment
-                    o2_raw, r, d, a2, f, s = self.env.step(a)
-                    o2 = self._augment_state(o2_raw) # 【注入描述符】
+                    o2, r, d, a2, f, s = self.env.step(a)
                 else:
-                    # Fake Step -> Augment
-                    o2_raw, r, d, a2, f = self.env.fake_step()
-                    o2 = self._augment_state(o2_raw) # 【注入描述符】
+                    o2, r, d, a2, f = self.env.fake_step()
                     s = False
 
                 t_total +=1
@@ -374,12 +256,10 @@ class TD3Agent:
                 writer.add_scalar('Train/Max_Force', f, t_total)
                 writer.add_scalar('Train/Step_Reward', r, t_total)
 
-                # Store in memory (存储的是带有描述符的 o 和 o2)
                 self.memory.record(o.to('cpu'), a2, r, o2.to('cpu'), d)
 
                 if (t+1) % nfake == 0:
-                    o2_f_raw, r_f, d_f, a_f, _ = self.env.fake_step()
-                    o2_f = self._augment_state(o2_f_raw) # 【注入描述符】
+                    o2_f, r_f, d_f, a_f, _ = self.env.fake_step()
                     self.memory.record(o.to('cpu'), a_f, r_f, o2_f.to('cpu'), d_f)
 
                 o = o2
@@ -387,6 +267,7 @@ class TD3Agent:
                 current_q_loss = None
                 current_pi_loss = None
 
+                # Update models
                 if t_total >= self.update_after and len(self.memory) >= self.batch_size and t_total % self.update_every == 0:
                     for j in range(self.update_every):
                         batch = self.memory.sample()
@@ -416,16 +297,21 @@ class TD3Agent:
                 if t_total% test_every == 0 and test_ep is not None:
                     print(f">>> Running Test at Step {t_total} ...")
                     data_to_save_test = self.test_agent(test_ep[0], test_ep[1], test_random)
+
+                    # 【修复2】Pandas concat
                     df_test = pd.concat([df_test, pd.DataFrame([data_to_save_test])], ignore_index=True)
+
                     df_test.to_csv(f"{path_to_the_main_dir}/data/df_{env_name}_test_si{start_iter}.csv")
                     writer.add_scalar('Test/Score', data_to_save_test['Score'], t_total)
                     writer.add_scalar('Test/Max_Force', data_to_save_test['Maximum_force'], t_total)
 
+                # Save Plots (main.py里配置了50，这里就是50)
                 if save_result and (t_total % plot_every == 0):
                     self.save_plots(path_to_the_main_dir, env_name, start_iter,
                                     df_train, df_test, pi_losses, q_losses,
                                     net_lim, e_lim, sticks, max_force, local_reward, train_ep, test_ep)
 
+                # Save Model
                 if t_total % save_every == 0:
                     self.save_model(path_to_the_main_dir, env_name, f"{i + start_iter}")
 
@@ -497,7 +383,7 @@ class TD3Agent:
         os.makedirs(ckpt_dir, exist_ok=True)
 
         ckpt_path = os.path.join(ckpt_dir, "td3_checkpoint_{}_{}".format(env_name, suffix))
-        print(f'>>> Saving models to {ckpt_path}')
+        print(f'>>> Saving models to {ckpt_path}') # 加个箭头更明显
 
         torch.save({'ac_pi': self.ac.pi.state_dict(),
                     'ac_pi_t' : self.ac_targ.pi.state_dict(),
@@ -521,6 +407,3 @@ class TD3Agent:
             self.ac_targ.q2.load_state_dict(checkpoint['ac_q2_t'])
             self.q_optimizer.load_state_dict(checkpoint['q_optim'])
             self.pi_optimizer.load_state_dict(checkpoint['pi_optim'])
-
-    def save_results(self, *args, **kwargs):
-        pass
