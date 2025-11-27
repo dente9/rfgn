@@ -199,6 +199,10 @@ class TD3Agent:
         return data_to_save_test
 
 
+    # 请确保文件头部有这些导入
+    # import csv
+    # from torch.utils.tensorboard import SummaryWriter
+
     def train(self, train_ep, test_ep, path_to_the_main_dir, env_name, test_every, start_iter = 0, save_every= 1000, e_lim = None, net_lim = None,
               save_result = True, test_random = False, N_gr = 30, d_r_max = 0.015, f_max = 0.1, noise_level = 10, nfake = 10,
               plot_every = 50):
@@ -214,11 +218,10 @@ class TD3Agent:
         # TensorBoard
         writer = SummaryWriter(log_dir=os.path.join(path_to_the_main_dir, 'logs'))
 
-        # 初始化 steps_log.csv
+        # CSV Log (初始化)
         csv_log_path = os.path.join(path_to_the_main_dir, 'logs', 'steps_log.csv')
         os.makedirs(os.path.dirname(csv_log_path), exist_ok=True)
-
-        # 【修改点1】：这里原来是 as f，为了安全也改名为 log_file
+        # 【修复1】使用 log_file 作为变量名，防止覆盖 f
         with open(csv_log_path, 'w', newline='') as log_file:
             csv_writer = csv.writer(log_file)
             csv_writer.writerow(['Total_Step', 'Episode', 'Ep_Step', 'Reward', 'Max_Force', 'Loss_Q', 'Loss_Pi'])
@@ -239,11 +242,8 @@ class TD3Agent:
                         c_gr = 0
                     else:
                         a = self.get_action(o, ((self.noise[1] - self.noise[0])/train_ep[1]) * t + self.noise[0])
-
-                    # 这里 f 代表 Force
                     o2, r, d, a2, f, s = self.env.step(a)
                 else:
-                    # 这里 f 代表 Force
                     o2, r, d, a2, f = self.env.fake_step()
                     s = False
 
@@ -282,12 +282,10 @@ class TD3Agent:
                             current_pi_loss = losses["loss_pi"]
                             writer.add_scalar('Loss/Actor_Pi', losses["loss_pi"], t_total)
 
-                # 【修改点2】：变量名改为 log_file，避免覆盖 Force 变量 f
                 with open(csv_log_path, 'a', newline='') as log_file:
                     csv_writer = csv.writer(log_file)
                     q_val = current_q_loss if current_q_loss is not None else ''
                     pi_val = current_pi_loss if current_pi_loss is not None else ''
-                    # 现在的 f 就是上面 env.step 产生的 Force 数值了
                     csv_writer.writerow([t_total, i+1, t+1, r, f, q_val, pi_val])
 
                 max_norm.append(a2.x.norm(dim = 1).max().item())
@@ -296,16 +294,18 @@ class TD3Agent:
                 else:
                     c_gr = 0
 
-                # Testing
                 if t_total% test_every == 0 and test_ep is not None:
                     print(f">>> Running Test at Step {t_total} ...")
                     data_to_save_test = self.test_agent(test_ep[0], test_ep[1], test_random)
+
+                    # 【修复2】Pandas concat
                     df_test = pd.concat([df_test, pd.DataFrame([data_to_save_test])], ignore_index=True)
+
                     df_test.to_csv(f"{path_to_the_main_dir}/data/df_{env_name}_test_si{start_iter}.csv")
                     writer.add_scalar('Test/Score', data_to_save_test['Score'], t_total)
                     writer.add_scalar('Test/Max_Force', data_to_save_test['Maximum_force'], t_total)
 
-                # Save Plots
+                # Save Plots (main.py里配置了50，这里就是50)
                 if save_result and (t_total % plot_every == 0):
                     self.save_plots(path_to_the_main_dir, env_name, start_iter,
                                     df_train, df_test, pi_losses, q_losses,
@@ -322,7 +322,12 @@ class TD3Agent:
                     sticks.append(t_total-1)
 
             data_to_save_train = {"Total_reward":ep_ret, "Last_step_train":ep_len, "Stop_label_train":s, "Env_name":self.env.current_ase_structure.get_chemical_formula() + "_" + str(self.env.num), "Weights": self.env.weights}
-            df_train = pd.concat([df_train, pd.DataFrame([data_to_save_train])], ignore_index=True)
+
+            df_new_row = pd.DataFrame([data_to_save_train])
+            if 'Stop_label_train' in df_new_row.columns:
+                 df_new_row['Stop_label_train'] = df_new_row['Stop_label_train'].astype(bool)
+
+            df_train = pd.concat([df_train, df_new_row], ignore_index=True)
             df_train.to_csv(f"{path_to_the_main_dir}/data/df_{env_name}_train_si{start_iter}.csv")
 
         writer.close()
