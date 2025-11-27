@@ -62,61 +62,76 @@ def get_new_df_interval(name, n, interval):
     return new_df
 
 
-def create_plots(data_list, save = False, show = True, path_to_the_main_dir = None, env_name = None, name = None):
+def create_plots(data_list, save=False, show=True, path_to_the_main_dir=None, env_name=None, name=None, folder_name='plots'):
+    """
+    增加 folder_name 参数，默认为 'plots'，这样不会影响其他调用此函数的代码。
+    """
+    font = {'family': 'serif',
+            # 'color':  'Black',
+            'weight': 'normal',
+            'size': 14,
+            }
+    numb = int(len(data_list) // 3) + 1 * (int(len(data_list) % 3) != 0)
+    if show:
+        clear_output(wait=True)
 
-        font = {'family': 'serif',
-#         'color':  'Black',
-        'weight': 'normal',
-        'size': 14,
-        }
-        numb = int(len(data_list)//3) + 1*(int(len(data_list)%3)!=0)
-        if show:
-            clear_output(wait=True)
+    fig, axes = plt.subplots(numb, 3)
+    plt.rc('font', **font)
+    fig.set_figwidth(20)
+    fig.set_figheight(8)
 
-        fig, axes = plt.subplots(numb, 3)
-        plt.rc('font', **font)
-        fig.set_figwidth(20)    #  ширина и
-        fig.set_figheight(8)
+    # 兼容 axes 只有 1 行的情况
+    if numb == 1:
+        axes = np.array(axes).flatten()
+    else:
         axes = axes.flatten()
-        for item_ax in zip(data_list.keys(), axes):
-            item = item_ax[0]
-            ax = item_ax[1]
-            max_data = []
-            min_data = []
-            for label, data in zip(data_list[item][0],data_list[item][1]):
-                if data_list[item][3] is not None:
-                    fmt = data_list[item][3]
-                else:
-                    fmt = "-"
-                ax.plot(data, fmt, label = label)
-                ax.set_title(item, fontdict=font)
 
-            if len(data)!= 0 and data_list[item][4] is not None:
-                ax.plot(data_list[item][4], min(data)*np.ones(len(data_list[item][4])),'|r')
+    for item_ax in zip(data_list.keys(), axes):
+        item = item_ax[0]
+        ax = item_ax[1]
+        max_data = []
+        min_data = []
+        for label, data in zip(data_list[item][0], data_list[item][1]):
+            if data_list[item][3] is not None:
+                fmt = data_list[item][3]
+            else:
+                fmt = "-"
+            ax.plot(data, fmt, label=label)
+            ax.set_title(item, fontdict=font)
 
-            if type(data_list[item][2]) is np.ndarray or type(data_list[item][2]) is list:
-                ylim = copy.deepcopy(data_list[item][2])
-                if len(data)!= 0 and None not in data:
-                    max_data.append(max(data))
-                    min_data.append(min(data))
+        if len(data) != 0 and data_list[item][4] is not None:
+            # 确保维度匹配
+            ax.plot(data_list[item][4], min(data) * np.ones(len(data_list[item][4])), '|r')
+
+        if type(data_list[item][2]) is np.ndarray or type(data_list[item][2]) is list:
+            ylim = copy.deepcopy(data_list[item][2])
+            if len(data) != 0 and None not in data:
+                max_data.append(max(data))
+                min_data.append(min(data))
+                # 简单的异常处理防止报错
+                try:
                     ylim[1] = min(max(max_data), ylim[1])
                     ylim[0] = max(min(min_data), ylim[0])
-                    if ylim[0] == ylim[1]:
-                        ylim = None
-            else:
+                except:
+                    pass
+                if ylim[0] == ylim[1]:
                     ylim = None
-            ax.set_ylim(ylim)
-            ax.set_xlabel("Number of steps", fontdict=font)
-            ax.legend()
-        plt.tight_layout()
+        else:
+            ylim = None
+        ax.set_ylim(ylim)
+        ax.set_xlabel("Number of steps", fontdict=font)
+        ax.legend()
+    plt.tight_layout()
 
-        if show:
-            plt.show()
-        if save:
-            if not os.path.exists(path_to_the_main_dir + "/" + 'plots/'):
-                os.makedirs(path_to_the_main_dir + "/" +'plots/')
+    if show:
+        plt.show()
+    if save:
+        # 使用传入的 folder_name (例如 'figs')，如果未传入则默认为 'plots' (兼容旧代码)
+        save_dir = os.path.join(path_to_the_main_dir, folder_name)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
 
-            path_to_save = "{0}".format(env_name)
-            fig.savefig(path_to_the_main_dir + "/" +"plots/" + path_to_save + name)
-            plt.close(fig)
+        path_to_save = "{0}".format(env_name)
+        fig.savefig(os.path.join(save_dir, path_to_save + name))
+        plt.close(fig)
 

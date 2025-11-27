@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import math
 import time
 from tqdm import tqdm
-
+from torch_scatter import scatter
 # format progress bar
 bar_format = '{l_bar}{bar:10}{r_bar}{bar:-10b}'
 
@@ -102,7 +102,7 @@ class Network(torch.nn.Module):
         act = {
             1: torch.nn.functional.silu,
             -1: torch.tanh,
-        }, 
+        },
         act_gates = {
             1: torch.sigmoid,
             -1: torch.tanh,
@@ -180,7 +180,7 @@ class Network(torch.nn.Module):
             edge_src = data['edge_index'][0]  # edge source
             edge_dst = data['edge_index'][1]  # edge destination
             edge_vec = data['edge_vec']
-        
+
         else:
             edge_index = radius_graph(data['pos'], self.max_radius, batch)
             edge_src = edge_index[0]
@@ -225,8 +225,8 @@ class Network(torch.nn.Module):
         else:
             assert self.irreps_node_attr == o3.Irreps("0e")
             z = data['pos'].new_ones((data['pos'].shape[0], 1))
-            
-        #Added by myself 
+
+        #Added by myself
         data["edge_attr"] = edge_attr
         data["edge_length_embedded"] = edge_length_embedded
 
@@ -238,18 +238,18 @@ class Network(torch.nn.Module):
         else:
             return x
 
-"""Basic e3nn network class with the following methods: 
-        1) get_convoltion: returns the set of e3nn convolutional layers 
-        2) preprocess: ensures that input graph has all necessery data, adds absent data 
-        3) forward: performs a preprocessing operation, embeds the length of the edge vector and projects this vector onto spherical harmonics, returns arrays with node attributes, node attributes, edge attributes, edge attributes, edge embedding, indices of nodes connected by edges and a batch containing the number of the structure to which it belongs the corresponding element from the array of node attributes. 
-        """ 
+"""Basic e3nn network class with the following methods:
+        1) get_convoltion: returns the set of e3nn convolutional layers
+        2) preprocess: ensures that input graph has all necessery data, adds absent data
+        3) forward: performs a preprocessing operation, embeds the length of the edge vector and projects this vector onto spherical harmonics, returns arrays with node attributes, node attributes, edge attributes, edge attributes, edge embedding, indices of nodes connected by edges and a batch containing the number of the structure to which it belongs the corresponding element from the array of node attributes.
+        """
 
 class Network_basic(torch.nn.Module):
-    
-    def get_convolution(self,irreps_in, irreps_hidden, irreps_edge_attr, irreps_node_attr, irreps_out, act, act_gates, layers, number_of_basis, radial_layers, radial_neurons, num_neighbors): 
-        
+
+    def get_convolution(self,irreps_in, irreps_hidden, irreps_edge_attr, irreps_node_attr, irreps_out, act, act_gates, layers, number_of_basis, radial_layers, radial_neurons, num_neighbors):
+
         irreps = irreps_in if irreps_in is not None else o3.Irreps("0e")
-        
+
         layers_list = torch.nn.ModuleList()
 
         for _ in range(layers):
@@ -293,14 +293,14 @@ class Network_basic(torch.nn.Module):
     def __init__(
         self,
         irreps_in,
-        lmax, 
-        irreps_node_attr, 
-        max_radius, 
+        lmax,
+        irreps_node_attr,
+        max_radius,
         number_of_basis
-        
+
     ) -> None:
         super().__init__()
-        
+
         self.irreps_in = irreps_in
         self.irreps_node_attr = o3.Irreps(irreps_node_attr) if irreps_node_attr is not None else o3.Irreps("0e")
         self.irreps_edge_attr = o3.Irreps.spherical_harmonics(lmax)
@@ -321,13 +321,13 @@ class Network_basic(torch.nn.Module):
             edge_src = data['edge_index'][0]  # edge source
             edge_dst = data['edge_index'][1]  # edge destination
             edge_vec = data['edge_vec']
-        
+
         else:
             edge_index = radius_graph(data['pos'], self.max_radius, batch)
             edge_src = edge_index[0]
             edge_dst = edge_index[1]
             edge_vec = data['pos'][edge_src] - data['pos'][edge_dst]
-                  
+
         return batch, edge_src, edge_dst, edge_vec
 
     def forward(self, data: Union[Data, Dict[str, torch.Tensor]]) -> torch.Tensor:
@@ -366,9 +366,9 @@ class Network_basic(torch.nn.Module):
         else:
             assert self.irreps_node_attr == o3.Irreps("0e")
             z = data['pos'].new_ones((data['pos'].shape[0], 1))
-            
+
         return x, z, edge_src, edge_dst, edge_attr, edge_length_embedded, batch
-       
+
 def visualize_layers(model):
     layer_dst = dict(zip(['sc', 'lin1', 'tp', 'lin2'], ['gate', 'tp', 'lin2', 'gate']))
     try: layers = model.mp.layers
