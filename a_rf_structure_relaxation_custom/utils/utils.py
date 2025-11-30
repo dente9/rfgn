@@ -66,7 +66,7 @@ def create_plots(data_list, save=False, show=True, path_to_the_main_dir=None, en
     """
     增加 folder_name 参数，默认为 'plots'，这样不会影响其他调用此函数的代码。
     """
-    font = {'family': 'sans-serif',
+    font = {'family': 'DejaVu Sans',
             # 'color':  'Black',
             'weight': 'normal',
             'size': 14,

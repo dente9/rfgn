@@ -20,9 +20,24 @@ print(f"Running on: {device}")
 # ------------------------------------------------------------------
 config = {
     # --- 路径与文件 ---
-    "path_to_the_main_dir": "outputs/alfe",
+    "path_to_the_main_dir": "outputs/alfe_split_experiment", # 修改输出路径以免覆盖旧数据
     "structures_file": "structures/AlFe.csv",
-    "interval": [1, 2],
+
+    # 【重点修改】：定义训练集区间和测试集区间
+    # Python 切片是左闭右开。
+    # [0, 1] 代表取第0个 (共1个) -> 用于训练
+    # [0, 2] 代表取第0个和第1个 (共2个) -> 用于测试
+    "train_interval": [0, 1],
+    "test_interval":  [0, 1],
+
+        # --- 训练循环控制 ---
+    "train_ep": [800, 1000],
+    "test_ep": [10, 100], # 每个测试结构测 10 次
+    "test_every": 100,
+    "save_every": 1000,
+    "save_result": True,
+    "test_random": False,
+    "start_iter": 0,
     "env_name": "AlFe_cubic",
 
     # --- 环境参数 ---
@@ -66,15 +81,7 @@ config = {
     "policy_delay": 2,
     "noise": [0.2, 0.2],
 
-    # --- 训练循环控制 ---
-    "train_ep": [800, 1000],
-    "test_ep": [10, 100],
-    "save_result": True,
-    "test_random": False,
-    # 【重点修改】：将测试频率从 1000 改为 200，这样你的 Test 图更新会变快
-    "test_every": 200,
-    "save_every": 1000,
-    "start_iter": 0,
+
 
     # --- 贪婪探索与辅助参数 ---
     "N_gr": int(1e6),
@@ -90,12 +97,44 @@ config = {
 
 # 3. 数据加载与环境准备
 # ------------------------------------------------------------------
-print(f"Loading structures from {config['structures_file']}...")
-s_lib, calcs = get_sturct_lib_and_calcs_gen(config['structures_file'], interval=config['interval'])
+print(f"\nLOADING DATA...")
+print(f" -> Loading TRAIN structures from interval {config['train_interval']}...")
+s_lib_train, calcs_train = get_sturct_lib_and_calcs_gen(config['structures_file'], interval=config['train_interval'])
 
-env_kwargs = {
-    "input_struct_lib": s_lib,
-    "calculator_lib": calcs,
+print(f" -> Loading TEST structures from interval {config['test_interval']}...")
+s_lib_test, calcs_test = get_sturct_lib_and_calcs_gen(config['structures_file'], interval=config['test_interval'])
+
+# --- 【DEBUG 信息：打印晶体详情】 ---
+print("\n" + "="*60)
+print(f"DEBUG: CHECKING LOADED STRUCTURES")
+print("-" * 60)
+print(f"【TRAINING SET】 (Size: {len(s_lib_train)})")
+for i, s in enumerate(s_lib_train):
+    print(f"  [Train Structure {i}] Formula: {s.formula}, Sites: {len(s)}")
+
+print("-" * 60)
+print(f"【TESTING SET】 (Size: {len(s_lib_test)})")
+for i, s in enumerate(s_lib_test):
+    print(f"  [Test Structure {i}]  Formula: {s.formula}, Sites: {len(s)}")
+print("="*60 + "\n")
+# -------------------------------------
+
+# 准备训练环境配置
+env_kwargs_train = {
+    "input_struct_lib": s_lib_train,
+    "calculator_lib": calcs_train,
+    "convert_to_graph_func": to_graph,
+    "r0": config['r0'],
+    "eps": config['eps'],
+    "reward_func": config['reward_func'],
+    "r_weights": config['r_weights'],
+    "stop_numb": config['stop_numb']
+}
+
+# 准备测试环境配置
+env_kwargs_test = {
+    "input_struct_lib": s_lib_test,
+    "calculator_lib": calcs_test,
     "convert_to_graph_func": to_graph,
     "r0": config['r0'],
     "eps": config['eps'],
@@ -151,6 +190,7 @@ if not os.path.exists(config['path_to_the_main_dir']):
     os.makedirs(config['path_to_the_main_dir'])
 
 wf = None
+# 这里的 path_weights 逻辑保持原样，如果有需要请确保它指向正确的文件
 if config['with_weights'] and config['path_weights'] is not None:
     pass
 
@@ -158,7 +198,8 @@ if config['with_weights'] and config['path_weights'] is not None:
 # ------------------------------------------------------------------
 agent_params = {
     "env_fn": Environment,
-    "env_kwards": env_kwargs,
+    "env_kwards": env_kwargs_train,     # 传入训练环境配置
+    "test_env_kwards": env_kwargs_test, # 传入测试环境配置
     "ac_kwargs": ac_kwargs,
     "seed": config['random_seed'],
     "replay_size": config['replay_size'],
@@ -221,6 +262,6 @@ train_args = {
 with open(config['path_to_the_main_dir'] + "/TD3_Agent_train_arguments.txt", 'w') as f:
     f.write(str(train_args))
 
-print("Start Training...")
+print("\nStart Training...")
 TD3_Agent.train(**train_args)
 print("Training Finished!")

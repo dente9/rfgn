@@ -6,10 +6,8 @@ import numpy as np
 
 # ================= 配置区域 =================
 # 输入两个实验的 outputs 文件夹路径
-# 实验 A (基准路径，例如你当前的 outputs/alfe)
-EXP_1_PATH = 'outputs/alfe'
-# 实验 B (未来的路径，例如 outputs/alfe_with_desc)
-EXP_2_PATH = 'outputs/alfe_new'
+EXP_1_PATH = 'outputs/alfe'          # 实验 A
+EXP_2_PATH = 'outputs/alfe_new'      # 实验 B
 
 # 给它们起个名字，用于图例显示
 EXP_1_NAME = 'Baseline (No Desc)'
@@ -29,26 +27,31 @@ def load_experiment_data(exp_path):
 
     data = {}
 
-    # 1. 读取 Step Log (steps_log.csv) - 微观步级数据
+    # 1. 读取 Step Log (微观步级数据)
     step_log_path = os.path.join(exp_path, 'logs', 'steps_log.csv')
     if os.path.exists(step_log_path):
         try:
             df = pd.read_csv(step_log_path)
-            data['step_log'] = df.sort_values('Total_Step')
+            # 确保按步数排序
+            if 'Total_Step' in df.columns:
+                data['step_log'] = df.sort_values('Total_Step')
+            else:
+                data['step_log'] = df # 容错
         except Exception as e:
             print(f"Error reading steps_log: {e}")
             data['step_log'] = None
     else:
         data['step_log'] = None
 
-    # 2. 读取 Train Log (df_..._train_...csv) - 宏观回合级数据
+    # 2. 读取 Train Log (宏观回合级数据)
     train_files = glob.glob(os.path.join(exp_path, 'data', '*_train_*.csv'))
     if train_files:
         train_file = sorted(train_files)[-1] # 取最新的一个
         try:
             df = pd.read_csv(train_file)
-            # 估算每个 Episode 结束时的 Total Step，以便与微观数据对齐 X 轴
-            df['Estimated_Total_Step'] = df['Last_step_train'].cumsum()
+            # 这里我们不需要再计算 Estimated_Total_Step 用于绘图了，但保留逻辑以防万一
+            if 'Last_step_train' in df.columns:
+                df['Estimated_Total_Step'] = df['Last_step_train'].cumsum()
             data['train_log'] = df
         except Exception as e:
             print(f"Error reading train csv: {e}")
@@ -56,7 +59,7 @@ def load_experiment_data(exp_path):
     else:
         data['train_log'] = None
 
-    # 3. 读取 Test Log (df_..._test_...csv) - 验证集数据
+    # 3. 读取 Test Log (验证集数据)
     test_files = glob.glob(os.path.join(exp_path, 'data', '*_test_*.csv'))
     if test_files:
         test_file = sorted(test_files)[-1]
@@ -79,48 +82,53 @@ def plot_comparison(data1, data2, name1, name2):
     try:
         plt.style.use('seaborn-v0_8-whitegrid')
     except:
-        plt.style.use('seaborn-whitegrid') # 兼容旧版 matplotlib
+        plt.style.use('seaborn-whitegrid')
 
-    # 【修改点】：使用 constrained_layout=True 自动修复标题重叠
-    fig, axes = plt.subplots(4, 2, figsize=(18, 18), constrained_layout=True)
+    # 使用 constrained_layout 自动调整布局
+    fig, axes = plt.subplots(4, 2, figsize=(18, 20), constrained_layout=True)
     fig.suptitle(f'Comprehensive Comparison: {name1} vs {name2}', fontsize=18, weight='bold')
 
-    # ============ ROW 1: Training Efficiency (Step Level) ============
+    # ============ ROW 1: Training Efficiency ============
 
-    # 1. Max Force (Log Scale)
+    # 1. Max Force (基于 Total Step)
     ax = axes[0, 0]
     for d, name in [(data1, name1), (data2, name2)]:
         if d and d['step_log'] is not None:
             df = d['step_log']
-            ax.plot(df['Total_Step'], df['Max_Force'].rolling(STEP_SMOOTH).mean(), label=name, alpha=0.8)
+            if 'Total_Step' in df.columns and 'Max_Force' in df.columns:
+                ax.plot(df['Total_Step'], df['Max_Force'].rolling(STEP_SMOOTH).mean(), label=name, alpha=0.8)
     ax.set_title(f'Training: Max Force (Moving Avg {STEP_SMOOTH})', fontsize=12)
     ax.set_ylabel('Force (eV/A)')
+    ax.set_xlabel('Total Steps') # 明确 X 轴单位
     ax.set_yscale('log')
     ax.legend(loc='upper right')
     ax.grid(True, which="both", ls="-", alpha=0.3)
 
-    # 2. Episode Length (From df_train)
+    # 2. Episode Length (【修改点】：基于 Episode 轮次)
     ax = axes[0, 1]
     for d, name in [(data1, name1), (data2, name2)]:
         if d and d['train_log'] is not None:
             df = d['train_log']
-            x_axis = df.get('Estimated_Total_Step', df.index)
-            ax.plot(x_axis, df['Last_step_train'].rolling(EP_SMOOTH).mean(), label=name, alpha=0.8)
+            # 使用 index 作为 X 轴 (Episode Number)
+            ax.plot(df.index, df['Last_step_train'].rolling(EP_SMOOTH).mean(), label=name, alpha=0.8)
     ax.set_title(f'Training: Steps per Episode (Moving Avg {EP_SMOOTH})', fontsize=12)
     ax.set_ylabel('Steps (Lower is Better)')
+    ax.set_xlabel('Episode') # 明确 X 轴单位
     ax.legend(loc='upper right')
 
-    # ============ ROW 2: Model Stability (Losses) ============
+    # ============ ROW 2: Model Stability (Losses - 基于 Step) ============
 
     # 3. Critic Loss
     ax = axes[1, 0]
     for d, name in [(data1, name1), (data2, name2)]:
         if d and d['step_log'] is not None:
             df = d['step_log'].dropna(subset=['Loss_Q'])
-            ax.plot(df['Total_Step'], df['Loss_Q'].rolling(STEP_SMOOTH).mean(), label=name, alpha=0.8)
+            if 'Total_Step' in df.columns:
+                ax.plot(df['Total_Step'], df['Loss_Q'].rolling(STEP_SMOOTH).mean(), label=name, alpha=0.8)
     ax.set_title('Training: Critic Loss (Q)', fontsize=12)
     ax.set_yscale('log')
     ax.set_ylabel('Loss')
+    ax.set_xlabel('Total Steps')
     ax.legend(loc='upper right')
 
     # 4. Actor Loss
@@ -128,12 +136,14 @@ def plot_comparison(data1, data2, name1, name2):
     for d, name in [(data1, name1), (data2, name2)]:
         if d and d['step_log'] is not None:
             df = d['step_log'].dropna(subset=['Loss_Pi'])
-            ax.plot(df['Total_Step'], df['Loss_Pi'].rolling(STEP_SMOOTH).mean(), label=name, alpha=0.8)
+            if 'Total_Step' in df.columns:
+                ax.plot(df['Total_Step'], df['Loss_Pi'].rolling(STEP_SMOOTH).mean(), label=name, alpha=0.8)
     ax.set_title('Training: Actor Loss (Pi)', fontsize=12)
     ax.set_ylabel('Loss')
+    ax.set_xlabel('Total Steps')
     ax.legend(loc='upper right')
 
-    # ============ ROW 3: Test Performance ============
+    # ============ ROW 3: Test Performance (基于 Test Iterations) ============
 
     # 5. Test Max Force
     ax = axes[2, 0]
@@ -158,18 +168,18 @@ def plot_comparison(data1, data2, name1, name2):
     ax.set_xlabel('Test Iterations')
     ax.legend(loc='upper right')
 
-    # ============ ROW 4: Overall Success (From df_train) ============
+    # ============ ROW 4: Overall Success (【修改点】：基于 Episode 轮次) ============
 
     # 7. Total Reward per Episode
     ax = axes[3, 0]
     for d, name in [(data1, name1), (data2, name2)]:
         if d and d['train_log'] is not None:
             df = d['train_log']
-            x_axis = df.get('Estimated_Total_Step', df.index)
-            ax.plot(x_axis, df['Total_reward'].rolling(EP_SMOOTH).mean(), label=name, alpha=0.8)
+            # 使用 index 作为 X 轴
+            ax.plot(df.index, df['Total_reward'].rolling(EP_SMOOTH).mean(), label=name, alpha=0.8)
     ax.set_title(f'Training: Total Reward per Episode (Moving Avg {EP_SMOOTH})', fontsize=12)
     ax.set_ylabel('Reward')
-    ax.set_xlabel('Total Training Steps')
+    ax.set_xlabel('Episode') # 明确 X 轴单位
     ax.legend(loc='lower right')
 
     # 8. Success Rate (Stop Label Analysis)
@@ -177,17 +187,19 @@ def plot_comparison(data1, data2, name1, name2):
     for d, name in [(data1, name1), (data2, name2)]:
         if d and d['train_log'] is not None:
             df = d['train_log']
-            x_axis = df.get('Estimated_Total_Step', df.index)
             # Stop_label=True 表示失败/异常停止。 Success = Not Stop.
-            success_rate = (~df['Stop_label_train'].astype(bool)).rolling(EP_SMOOTH).mean()
-            ax.plot(x_axis, success_rate, label=name, alpha=0.8, linewidth=2)
+            # 确保 Stop_label_train 是布尔值
+            is_stopped = df['Stop_label_train'].astype(bool)
+            success_rate = (~is_stopped).rolling(EP_SMOOTH).mean()
+
+            # 使用 index 作为 X 轴
+            ax.plot(df.index, success_rate, label=name, alpha=0.8, linewidth=2)
     ax.set_title(f'Training: Success Rate (Moving Avg {EP_SMOOTH})', fontsize=12)
     ax.set_ylabel('Success Rate (0~1)')
-    ax.set_xlabel('Total Training Steps')
+    ax.set_xlabel('Episode') # 明确 X 轴单位
     ax.legend(loc='lower right')
     ax.set_ylim(-0.05, 1.05)
 
-    # 不再需要 plt.tight_layout()，因为 constrained_layout=True 已经处理了
     print("Plotting finished. Showing results...")
     plt.show()
 
