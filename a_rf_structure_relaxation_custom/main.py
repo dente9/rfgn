@@ -27,12 +27,12 @@ config = {
     # Python 切片是左闭右开。
     # [0, 1] 代表取第0个 (共1个) -> 用于训练
     # [0, 2] 代表取第0个和第1个 (共2个) -> 用于测试
-    "train_interval": [0, 1],
-    "test_interval":  [0, 1],
+    "train_interval": [1, 2],
+    "test_interval":  [1, 2],
 
         # --- 训练循环控制 ---
     "train_ep": [800, 1000],
-    "test_ep": [10, 100], # 每个测试结构测 10 次
+    "test_ep": [10, 10], # 每个测试结构测 10 次
     "test_every": 100,
     "save_every": 1000,
     "save_result": True,
@@ -41,8 +41,8 @@ config = {
     "env_name": "AlFe_cubic",
 
     # --- 环境参数 ---
-    "reward_func": "force",
-    "r_weights": [1, 1, 1],
+    "reward_func": "hybrid",
+    "r_weights": [1, 2, 1],
     "eps": 0.01,
     "r0": 1.5,
     "stop_numb": 50,

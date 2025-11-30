@@ -7,7 +7,7 @@ import numpy as np
 # ================= 配置区域 =================
 # 输入两个实验的 outputs 文件夹路径
 EXP_1_PATH = 'outputs/alfe'          # 实验 A
-EXP_2_PATH = 'outputs/alfe_new'      # 实验 B
+EXP_2_PATH = 'outputs/alfe_split_experiment'      # 实验 B
 
 # 给它们起个名字，用于图例显示
 EXP_1_NAME = 'Baseline (No Desc)'

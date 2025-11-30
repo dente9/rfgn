@@ -655,17 +655,20 @@ class TD3Agent:
         return ckpt_path
 
     def load_model(self, ckpt_path):
-        print('Loading models from {}'.format(ckpt_path))
-        if ckpt_path is not None:
-            checkpoint = torch.load(ckpt_path)
-            self.ac.pi.load_state_dict(checkpoint['ac_pi'])
-            self.ac_targ.pi.load_state_dict(checkpoint['ac_pi_t'])
-            self.ac.q1.load_state_dict(checkpoint['ac_q1'])
-            self.ac.q2.load_state_dict(checkpoint['ac_q2'])
-            self.ac_targ.q1.load_state_dict(checkpoint['ac_q1_t'])
-            self.ac_targ.q2.load_state_dict(checkpoint['ac_q2_t'])
-            self.q_optimizer.load_state_dict(checkpoint['q_optim'])
-            self.pi_optimizer.load_state_dict(checkpoint['pi_optim'])
+            print('Loading models from {}'.format(ckpt_path))
+            if ckpt_path is not None:
+                # 【修复】增加 map_location参数
+                # 这样无论模型是在GPU还是CPU训练的，都会被正确加载到当前设备(self.device)
+                checkpoint = torch.load(ckpt_path, map_location=self.device)
+
+                self.ac.pi.load_state_dict(checkpoint['ac_pi'])
+                self.ac_targ.pi.load_state_dict(checkpoint['ac_pi_t'])
+                self.ac.q1.load_state_dict(checkpoint['ac_q1'])
+                self.ac.q2.load_state_dict(checkpoint['ac_q2'])
+                self.ac_targ.q1.load_state_dict(checkpoint['ac_q1_t'])
+                self.ac_targ.q2.load_state_dict(checkpoint['ac_q2_t'])
+                self.q_optimizer.load_state_dict(checkpoint['q_optim'])
+                self.pi_optimizer.load_state_dict(checkpoint['pi_optim'])
 
     def save_results(self, *args, **kwargs):
         pass
