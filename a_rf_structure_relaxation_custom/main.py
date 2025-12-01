@@ -2,7 +2,7 @@ import torch
 import os
 import pandas as pd
 import numpy as np
-
+import argparse
 # 引入项目模块
 from utils.convert_to_graph_e3nn import to_graph
 from utils.model_e3nn import PeriodicNetwork_Pi, PeriodicNetwork_Q
@@ -12,15 +12,22 @@ from utils.utils import get_the_last_checkpoint, extract_number
 
 # 1. 全局设置
 # ------------------------------------------------------------------
+parser = argparse.ArgumentParser(description="TD3 Training Script")
+parser.add_argument('--name', '-n', type=str, required=True,help='实验任务名称')
+parser.add_argument('--reward_func', '-rf', type=str,default="hybrid",help='reward_func,force,hybrid,log_force')
+args = parser.parse_args()
+
 torch.set_default_dtype(torch.float64)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Running on: {device}")
+print(f"target_name:{{args.name}}")
+
 
 # 2. 配置参数
 # ------------------------------------------------------------------
 config = {
     # --- 路径与文件 ---
-    "path_to_the_main_dir": "outputs/alfe_split_experiment", # 修改输出路径以免覆盖旧数据
+    "path_to_the_main_dir": f"outputs/{args.name}", # 修改输出路径以免覆盖旧数据
     "structures_file": "structures/AlFe.csv",
 
     # 【重点修改】：定义训练集区间和测试集区间
@@ -41,7 +48,7 @@ config = {
     "env_name": "AlFe_cubic",
 
     # --- 环境参数 ---
-    "reward_func": "hybrid",
+    "reward_func": args.reward_func,
     "r_weights": [1, 2, 1],
     "eps": 0.01,
     "r0": 1.5,
