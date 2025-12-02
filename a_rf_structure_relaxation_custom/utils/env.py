@@ -278,11 +278,38 @@ class Environment:
             r = -max_f
         if self.reward_func == "step":
             r = d-1
+        # if self.reward_func == "hybrid":
+        #     r1 = -max_f
+        #     r2 = -np.log10(max_f)
+        #     r3 = d-1
+        #     r = self.r_weights[0]*r1+ self.r_weights[1]*r2 + self.r_weights[2]*r3
         if self.reward_func == "hybrid":
+            # 1. 线性项 (Linear) - 负责高位压制
+            # 权重给低一点(0.05)。当 F=50 时，贡献 -2.5。
+            # 它的作用是：当力很大的时候，提供一个基础的下降方向。
             r1 = -max_f
-            r2 = -np.log10(max_f)
-            r3 = d-1
-            r = self.r_weights[0]*r1+ self.r_weights[1]*r2 + self.r_weights[2]*r3
+
+            # 2. 对数项 (Shifted Log) - 负责中低位冲刺
+            # 权重给高(1.0)。目标是 0.01。
+            # 当 F=50 时，log10(5000)=3.7。贡献 -3.7。
+            # 当 F=1 时，log10(100)=2.0。贡献 -2.0。
+            # 这里的技巧是：让 log 在 F=50 时和 linear 的贡献量级相当。
+            target_val = 0.01
+            # 加个极小值防止log报错
+            r2 = -np.log10(max(max_f, 1e-7) / target_val)
+
+            # 3. 步数 (Step)
+            # 降低步数惩罚权重到 0.5。
+            # 既然不限制步长，智能体可能需要更多步数来微调，别催太急。
+            # 但给成功一个大奖励 (+10) 依然很有必要。
+            if d:
+                r3 = 10.0
+            else:
+                r3 = -1.0 # 保持为负，维持生存压力
+
+            # 组合
+            # r_weights = [0.5, 2, 1]
+            r = self.r_weights[0]*r1 + self.r_weights[1]*r2 + self.r_weights[2]*r3
 
         return o2, r, d, a, max_f, s
 

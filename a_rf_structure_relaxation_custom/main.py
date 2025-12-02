@@ -39,8 +39,8 @@ config = {
 
         # --- 训练循环控制 ---
     "train_ep": [800, 1000],
-    "test_ep": [10, 10], # 每个测试结构测 10 次
-    "test_every": 100,
+    "test_ep": [10, 100], # 每个测试结构测 100 次
+    "test_every": 500,
     "save_every": 1000,
     "save_result": True,
     "test_random": False,
@@ -49,7 +49,7 @@ config = {
 
     # --- 环境参数 ---
     "reward_func": args.reward_func,
-    "r_weights": [1, 2, 1],
+    "r_weights": [0.5, 2, 1],
     "eps": 0.01,
     "r0": 1.5,
     "stop_numb": 50,
