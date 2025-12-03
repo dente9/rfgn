@@ -14,6 +14,7 @@ import csv
 import re
 import time
 import matplotlib.pyplot as plt  # 【新增】用于在 train 中自定义绘图
+import sys
 
 # ==============================================================================
 # 【配置区域】
@@ -24,7 +25,7 @@ DESC_DIM = 8
 
 
 class GaussianSmearing(nn.Module):
-    def __init__(self, start=0.0, stop=5.0, n_gaussians=DESC_DIM):
+    def __init__(self, start=0.0, stop=5.0, n_gaussians=8):
         super().__init__()
         offset = torch.linspace(start, stop, n_gaussians)
         widths = (offset[1] - offset[0]) * torch.ones_like(offset)
@@ -41,7 +42,7 @@ class Agent(nn.Module):
     r"""The class of TD3 Agent."""
     def __init__(self, net_actor, net_critic, actor_feat, critic_feat):
         super().__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu" if sys.platform.startswith('win') else ("cuda" if torch.cuda.is_available() else "cpu"))
         self.q1 = net_critic(**critic_feat).to(self.device)
         self.q2 = net_critic(**critic_feat).to(self.device)
         self.pi = net_actor(**actor_feat).to(self.device)
@@ -77,7 +78,7 @@ class TD3Agent:
 
         torch.manual_seed(seed)
         np.random.seed(seed)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu" if sys.platform.startswith('win') else ("cuda" if torch.cuda.is_available() else "cpu"))
 
         # --- Descriptor ---
         if USE_ENV_DESCRIPTOR:

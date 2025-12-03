@@ -1,6 +1,4 @@
 import numpy as np
-import torch
-import os
 
 class ReplayMemory:
     r"""The class for Replay Buffer.

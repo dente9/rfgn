@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-一键下载 atomic_properties.csv 并读成 DataFrame
-usage:  import atomic_df
-        df = atomic_df.get()
-"""
-import os
 import pandas as pd
 from pathlib import Path
 import requests

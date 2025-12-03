@@ -4,7 +4,6 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 from utils.utils_model import Network, Network_basic
 from e3nn import o3
-import torch_geometric
 import torch_scatter
 import e3nn
 from torch.distributions.normal import Normal

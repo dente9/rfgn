@@ -10,8 +10,7 @@ from e3nn.nn import Gate
 from e3nn.nn.models.gate_points_2101 import Convolution, smooth_cutoff, tp_path_exists
 
 import matplotlib.pyplot as plt
-import math
-import time
+
 from tqdm import tqdm
 from torch_scatter import scatter
 # format progress bar

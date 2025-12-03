@@ -1,12 +1,9 @@
-import ase
-from ase import Atoms
 from ase.optimize import BFGS
 from pymatgen.core.structure import Structure
 from pymatgen.io.ase import AseAtomsAdaptor
 from ase.calculators.lj import LennardJones
 import numpy as np
 import torch
-from copy import deepcopy
 import pandas as pd
 from utils.calcs_func import func_for_calc
 from IPython.display import clear_output

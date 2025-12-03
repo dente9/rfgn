@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import numpy as np
 import argparse
+import sys
 # 引入项目模块
 from utils.convert_to_graph_e3nn import to_graph
 from utils.model_e3nn import PeriodicNetwork_Pi, PeriodicNetwork_Q
@@ -18,9 +19,9 @@ parser.add_argument('--reward_func', '-rf', type=str,default="hybrid",help='rewa
 args = parser.parse_args()
 
 torch.set_default_dtype(torch.float64)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu" if sys.platform.startswith('win') else ("cuda" if torch.cuda.is_available() else "cpu"))
 print(f"Running on: {device}")
-print(f"target_name:{{args.name}}")
+print(f"target_name:{args.name}")
 
 
 # 2. 配置参数

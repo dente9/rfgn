@@ -3,9 +3,6 @@ import torch
 from torch_geometric.data import Data
 import numpy as np
 from pymatgen.io.ase import AseAtomsAdaptor
-#import torch_geometric
-#from typing import Dict, Union
-
 
 atomic_properties_url = "https://raw.githubusercontent.com/lenkakolenka/File/f75f040424669788d658bec8afe16f3e35d44d9e/atomic_properties.csv"
 atomic_properties_url = 'atomic_properties.csv'
