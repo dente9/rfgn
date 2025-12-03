@@ -15,13 +15,9 @@ import re
 import time
 import matplotlib.pyplot as plt  # 【新增】用于在 train 中自定义绘图
 import sys
+from utils.aconfig import GlobalConfig
 
-# ==============================================================================
-# 【配置区域】
-# ==============================================================================
-USE_ENV_DESCRIPTOR = True
-DESC_DIM = 8
-# ==============================================================================
+
 
 
 class GaussianSmearing(nn.Module):
@@ -42,7 +38,7 @@ class Agent(nn.Module):
     r"""The class of TD3 Agent."""
     def __init__(self, net_actor, net_critic, actor_feat, critic_feat):
         super().__init__()
-        self.device = torch.device("cpu" if sys.platform.startswith('win') else ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.device = GlobalConfig.DEVICE
         self.q1 = net_critic(**critic_feat).to(self.device)
         self.q2 = net_critic(**critic_feat).to(self.device)
         self.pi = net_actor(**actor_feat).to(self.device)
@@ -78,24 +74,26 @@ class TD3Agent:
 
         torch.manual_seed(seed)
         np.random.seed(seed)
-        self.device = torch.device("cpu" if sys.platform.startswith('win') else ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.device = GlobalConfig.DEVICE
+        self.USE_ENV_DESCRIPTOR=GlobalConfig.USE_ENV_DESCRIPTOR
+        self.DESC_DIM = GlobalConfig.DESC_DIM
 
         # --- Descriptor ---
-        if USE_ENV_DESCRIPTOR:
-            print(f"\n[Info] Environment Descriptor ENABLED. Adding {DESC_DIM} radial features.")
+        if self.USE_ENV_DESCRIPTOR:
+            print(f"\n[Info] Environment Descriptor ENABLED. Adding {self.DESC_DIM} radial features.")
 
             self.r_max = ac_kwargs['actor_feat'].get('max_radius', 5.0)
-            self.smearing = GaussianSmearing(start=0.0, stop=self.r_max, n_gaussians=DESC_DIM).to(self.device)
+            self.smearing = GaussianSmearing(start=0.0, stop=self.r_max, n_gaussians=self.DESC_DIM).to(self.device)
 
             def patch_irreps(irreps_str):
                 match = re.search(r'(\d+)x0e', irreps_str)
                 if match:
                     old_dim = int(match.group(1))
-                    new_dim = old_dim + DESC_DIM
+                    new_dim = old_dim + self.DESC_DIM
                     new_str = irreps_str.replace(f"{old_dim}x0e", f"{new_dim}x0e", 1)
                     return new_str
                 else:
-                    return f"{irreps_str} + {DESC_DIM}x0e"
+                    return f"{irreps_str} + {self.DESC_DIM}x0e"
 
             if 'actor_feat' in ac_kwargs:
                 old_in = ac_kwargs['actor_feat']['irreps_in']
@@ -151,7 +149,7 @@ class TD3Agent:
                 self.rewards_for_weights = []
                 for i in range(len(env_kwards["input_struct_lib"])):
                     o, _, _, _ = self.env.reset(self.trans_coef, i), False, 0, 0
-                    if USE_ENV_DESCRIPTOR: o = self._augment_state(o)
+                    if self.USE_ENV_DESCRIPTOR: o = self._augment_state(o)
                     _, _, _, _, f, _ = self.env.step(self.get_action(o, 0), 0)
                     self.rewards_for_weights.append(f)
                 self.rewards_for_weights = np.array(self.rewards_for_weights)
@@ -161,7 +159,7 @@ class TD3Agent:
             self.env.weights = np.ones(L)/L
 
     def _augment_state(self, o):
-        if not USE_ENV_DESCRIPTOR:
+        if not self.USE_ENV_DESCRIPTOR:
             return o
 
         dist = None
@@ -180,7 +178,7 @@ class TD3Agent:
 
         edge_features = self.smearing(dist.to(self.device))
         row, col = o.edge_index
-        node_descriptor = torch.zeros(o.num_nodes, DESC_DIM, device=self.device, dtype=o.x.dtype)
+        node_descriptor = torch.zeros(o.num_nodes, self.DESC_DIM, device=self.device, dtype=o.x.dtype)
         node_descriptor.index_add_(0, row.to(self.device), edge_features)
 
         deg = torch.zeros(o.num_nodes, 1, device=self.device, dtype=o.x.dtype)
@@ -292,7 +290,7 @@ class TD3Agent:
                 np.random.seed(global_idx + 1000) # +1000防止和训练种子重叠
 
                 o_raw, d, ep_ret, ep_disc_ret, ep_len = self.test_env.reset(self.trans_coef, actual_num, correct = False), False, 0, 0, 0
-                if USE_ENV_DESCRIPTOR: o = self._augment_state(o_raw)
+                if self.USE_ENV_DESCRIPTOR: o = self._augment_state(o_raw)
                 else: o = o_raw
 
                 self.test_labels.append(self.test_env.num) # 记录当前 label
@@ -300,7 +298,7 @@ class TD3Agent:
                 is_stopped = False
                 while not(d or (ep_len == max_test_steps)):
                     o_raw, r, d, _, f, s = self.test_env.step(self.get_action(o, None))
-                    if USE_ENV_DESCRIPTOR: o = self._augment_state(o_raw)
+                    if self.USE_ENV_DESCRIPTOR: o = self._augment_state(o_raw)
                     else: o = o_raw
 
                     ep_ret += r
@@ -380,7 +378,7 @@ class TD3Agent:
             ep_start_time = time.time()
 
             o_raw, ep_ret, ep_len = self.env.reset(self.trans_coef), 0, 0
-            if USE_ENV_DESCRIPTOR: o = self._augment_state(o_raw)
+            if self.USE_ENV_DESCRIPTOR: o = self._augment_state(o_raw)
             else: o = o_raw
 
             max_norm = []
@@ -397,11 +395,11 @@ class TD3Agent:
                         a = self.get_action(o, ((self.noise[1] - self.noise[0])/train_ep[1]) * t + self.noise[0])
 
                     o2_raw, r, d, a2, f, s = self.env.step(a)
-                    if USE_ENV_DESCRIPTOR: o2 = self._augment_state(o2_raw)
+                    if self.USE_ENV_DESCRIPTOR: o2 = self._augment_state(o2_raw)
                     else: o2 = o2_raw
                 else:
                     o2_raw, r, d, a2, f = self.env.fake_step()
-                    if USE_ENV_DESCRIPTOR: o2 = self._augment_state(o2_raw)
+                    if self.USE_ENV_DESCRIPTOR: o2 = self._augment_state(o2_raw)
                     else: o2 = o2_raw
                     s = False
 
@@ -420,7 +418,7 @@ class TD3Agent:
 
                 if (t+1) % nfake == 0:
                     o2_f_raw, r_f, d_f, a_f, _ = self.env.fake_step()
-                    if USE_ENV_DESCRIPTOR: o2_f = self._augment_state(o2_f_raw)
+                    if self.USE_ENV_DESCRIPTOR: o2_f = self._augment_state(o2_f_raw)
                     else: o2_f = o2_f_raw
                     self.memory.record(o.to('cpu'), a_f, r_f, o2_f.to('cpu'), d_f)
 

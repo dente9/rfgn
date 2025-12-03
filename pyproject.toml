@@ -1,50 +1,46 @@
 [project]
 name = "rfgn"
 version = "0.1.0"
-description = "Add your description here"
+description = "RTX 5060 Ti Setup (CUDA 12.9)"
 readme = "README.md"
 requires-python = "~=3.10.0"
 dependencies = [
     "ase==3.23.0",
     "e3nn==0.5.8",
-    "ipython>=8.37.0",
-    "matplotlib>=3.10.7",
     "numpy==1.26.4",
     "pandas==1.5.3",
     "pymatgen>=2024.5.1",
     "tensorboard>=2.20.0",
-    "torch==2.5.1",
+    "ipython>=8.37.0",
+    "matplotlib>=3.10.7",
+    "torch==2.8.0",
     "torch-cluster==1.6.3",
-    "torch-geometric==2.6.1",
     "torch-scatter==2.1.2",
     "torch-sparse==0.6.18",
+    "torch-geometric==2.6.1",
 ]
-
-
 
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
 explicit = true
 
 [[tool.uv.index]]
-name = "pyg-cu124"
-url = "https://data.pyg.org/whl/torch-2.5.1+cu124.html"
+name = "pyg-cu129"
+url = "https://data.pyg.org/whl/torch-2.8.0+cu129.html"
 format = "flat"
 explicit = true
 
-[tool.uv.extra-build-dependencies]
-torch-cluster = ["torch"]
-torch-scatter = ["torch"]
-torch-sparse = ["torch"]
-
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu124" }]
-torch-cluster = [{ index = "pyg-cu124" }]
-torch-scatter = [{ index = "pyg-cu124" }]
-torch-sparse = [{ index = "pyg-cu124" }]
+torch = [{ index = "pytorch-cu129" }]
+torchvision = [{ index = "pytorch-cu129" }]
+torchaudio = [{ index = "pytorch-cu129" }]
+torch-cluster = [{ index = "pyg-cu129" }]
+torch-scatter = [{ index = "pyg-cu129" }]
+torch-sparse = [{ index = "pyg-cu129" }]
 
-
+#[tool.uv]
+#environments = ["sys_platform == 'win32'"]

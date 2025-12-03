@@ -10,6 +10,7 @@ from utils.model_e3nn import PeriodicNetwork_Pi, PeriodicNetwork_Q
 from utils.td3 import TD3Agent
 from utils.env import Environment, get_sturct_lib_and_calcs_gen
 from utils.utils import get_the_last_checkpoint, extract_number
+from utils.aconfig import GlobalConfig
 
 # 1. 全局设置
 # ------------------------------------------------------------------
@@ -19,7 +20,9 @@ parser.add_argument('--reward_func', '-rf', type=str,default="hybrid",help='rewa
 args = parser.parse_args()
 
 torch.set_default_dtype(torch.float64)
-device = torch.device("cpu" if sys.platform.startswith('win') else ("cuda" if torch.cuda.is_available() else "cpu"))
+GlobalConfig.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+device = GlobalConfig.DEVICE
+GlobalConfig.USE_ENV_DESCRIPTOR = True
 print(f"Running on: {device}")
 print(f"target_name:{args.name}")
 
