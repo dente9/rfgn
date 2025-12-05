@@ -14,10 +14,7 @@ import csv
 import re
 import time
 import matplotlib.pyplot as plt  # 【新增】用于在 train 中自定义绘图
-import sys
 from utils.aconfig import GlobalConfig
-
-
 
 
 class GaussianSmearing(nn.Module):

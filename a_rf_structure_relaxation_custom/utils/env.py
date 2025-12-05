@@ -360,8 +360,13 @@ class Environment:
             r_f = d_f-1
         if self.reward_func == "hybrid":
             r1 = -max_f
-            r2 = -np.log10(max_f)
-            r3 = d_f-1
+            target_val = 0.01
+            r2 = -np.log10(max(max_f, 1e-7) / target_val)
+            if d_f:
+                r3 = 10.0
+            else:
+                r3 = -1.0
+
             r_f = self.r_weights[0]*r1+ self.r_weights[1]*r2 + self.r_weights[2]*r3
         if self.reward_func == "energy":
             r_f = -self.current_ase_structure.get_potential_energy()
