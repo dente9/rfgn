@@ -13,3 +13,54 @@ uv run python TD3_e3nn.py --path_to_the_main_dir outputs/exp_name --structures_f
 ```
 
 git clone https://github.com/dente9/rfgn.git
+
+# TensorBoard 启动 & 连通性测试速查
+
+## 1. 启动命令（容器 / 远程机）
+
+```bash
+# 杀掉旧进程
+pkill -f tensorboard
+
+# 重新启动：①秒级扫盘 ②允许外部映射 ③开启流式推送
+tensorboard \
+  --logdir runs/sleep_test \
+  --host 0.0.0.0 \
+  --port 6006 \
+  --reload_interval=1
+```
+
+> 日志目录换成自己的；端口可改。
+
+## 2. 本地端口映射（如有需要）
+
+```bash
+# 在本地电脑执行，把远程 6006 映射到本地 6006
+ssh -L 6006:127.0.0.1:6006 user@远程IP
+ssh -L 6006:127.0.0.1:6006 13161352780@xn-a.suanjiayun.com -p 2020
+```
+
+## 3. 连通性测试
+
+| 目的               | 命令                              |
+| ------------------ | --------------------------------- |
+| 查看端口是否监听   | `lsof -i:6006`                  |
+| 查看 TCP 监听状态  | `netstat -tulnp \| grep 6006`    |
+| 确认 HTTP 服务正常 | `curl -I http://localhost:6006` |
+
+期望输出（curl）：
+
+```bash
+HTTP/1.1 200 OK
+Server: Werkzeug/3.x.x Python/3.x.x
+...
+```
+
+## 4. 浏览器访问
+
+- 地址：`http://127.0.0.1:6006`
+- **首次或重启服务后务必「无痕窗口」或 Ctrl+Shift+R 强制刷新**，否则旧页面不会自动动。
+
+netstat -ano | findstr ":6006"
+
+Stop-Process -Id 29904 -Force

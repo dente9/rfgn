@@ -64,7 +64,7 @@ config = {
     "em_dim": 10,
     "r_max": 5.0,
     "num_neighbors": 25,
-    "noise_clip": 0.1,
+    "noise_clip": 0.05,
     "expl_mode": 'state',
 
     # Actor 具体参数
@@ -81,14 +81,14 @@ config = {
     "random_seed": 5599,
     "replay_size": int(1e6),
     "gamma": 0.9999,
-    "polyak": 0.995,
-    "pi_lr": 1e-05,
-    "q_lr": 1e-05,
-    "batch_size": 100,
+    "polyak": 0.98,
+    "pi_lr": 3e-04,
+    "q_lr": 3e-04,
+    "batch_size": 256,
     "start_steps": 0,
     "update_after": 0,
     "update_every": 1,
-    "target_noise": 0.05,
+    "target_noise": 0.02,
     "policy_delay": 2,
     "noise": [0.2, 0.2],
 
