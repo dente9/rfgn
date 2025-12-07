@@ -15,6 +15,7 @@ import re
 import time
 import matplotlib.pyplot as plt  # 【新增】用于在 train 中自定义绘图
 from utils.aconfig import GlobalConfig
+import datetime
 
 
 class GaussianSmearing(nn.Module):
@@ -361,7 +362,14 @@ class TD3Agent:
         df_train = pd.DataFrame(None, columns=["Total_reward", "Last_step_train", "Stop_label_train", "Env_name", "Weights"])
 
         os.makedirs(os.path.join(path_to_the_main_dir, 'data'), exist_ok = True)
-        writer = SummaryWriter(log_dir=os.path.join(path_to_the_main_dir, 'logs'))
+
+        current_time = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+
+        # 格式例如: your_path/logs/StructureName_iter0_20231206-173000
+        run_name = f"{env_name}_iter{start_iter}_{current_time}"
+        log_dir_path = os.path.join(path_to_the_main_dir, 'logs', run_name)
+
+        writer = SummaryWriter(log_dir=log_dir_path)
 
         csv_log_path = os.path.join(path_to_the_main_dir, 'logs', 'steps_log.csv')
         os.makedirs(os.path.dirname(csv_log_path), exist_ok=True)
@@ -560,6 +568,9 @@ class TD3Agent:
                     break
                 if t + 1 == train_ep[1]:
                     sticks.append(t_total-1)
+
+            writer.add_scalar('Train/Total_reward_of_the_episode', ep_ret, t_total)
+            writer.add_scalar('Train/Last_step_of_the_episode', ep_len, i + start_iter)
 
             ep_end_time = time.time()
             ep_duration = ep_end_time - ep_start_time

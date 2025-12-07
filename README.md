@@ -23,11 +23,9 @@ git clone https://github.com/dente9/rfgn.git
 pkill -f tensorboard
 
 # 重新启动：①秒级扫盘 ②允许外部映射 ③开启流式推送
-tensorboard \
-  --logdir runs/sleep_test \
-  --host 0.0.0.0 \
-  --port 6006 \
-  --reload_interval=1
+tensorboard --logdir runs/sleep_test --host 0.0.0.0 --port 6006
+
+tensorboard --logdir runs/outputs --port 6006
 ```
 
 > 日志目录换成自己的；端口可改。
