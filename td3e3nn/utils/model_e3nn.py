@@ -11,8 +11,11 @@ from torch_cluster import radius_graph
 from e3nn.math import soft_one_hot_linspace
 from e3nn.nn import Gate
 from e3nn.nn.models.gate_points_2101 import Convolution, smooth_cutoff, tp_path_exists
-
+from utils.env import ENV_INFO_DIM
+ENV_INFO_DIM = ENV_INFO_DIM
 torch.set_default_dtype(torch.float64)
+
+
 
 # ==============================================================================
 # 1. 基础组件
@@ -198,7 +201,7 @@ class Network(torch.nn.Module):
 
 class PeriodicNetwork_Pi(Network):
     def __init__(self, em_dim, noise_clip=0.2, scaled=False, expl_mode='state',
-                 env_input_dim=15, **kwargs):
+                 env_input_dim=ENV_INFO_DIM, **kwargs):
 
         # 【关键设置】关闭父类的强制融合，我们要自己控制融合方式
         kwargs['late_fusion_dim'] = 0
@@ -297,7 +300,7 @@ class PeriodicNetwork_Pi(Network):
 # 2. Critic (Q) - 采用 Late Fusion (池化后拼接)
 # ==============================================================================
 class PeriodicNetwork_Q(Network):
-    def __init__(self, em_dim, env_input_dim=15, **kwargs):
+    def __init__(self, em_dim, env_input_dim=ENV_INFO_DIM, **kwargs):
         # 【关键设置】关闭父类的强制融合
         kwargs['late_fusion_dim'] = 0
         kwargs['reduce_output'] = False

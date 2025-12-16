@@ -13,6 +13,9 @@ from IPython.display import clear_output
 from torch_geometric.data import Data
 from utils.descriptors import HybridRLFeaturizer
 
+USE_ENV_INFO = False
+ENV_INFO_DIM = 15 if USE_ENV_INFO else 0
+
 
 params = {
     "radius": 5, # cut-off radius
@@ -132,7 +135,7 @@ class Environment:
                  eps: float = 1e-6,
                  stop_numb: int = 50,
                  r_weights = None,
-                 use_descriptors: bool = True,
+                 use_descriptors: bool = USE_ENV_INFO,
                 ):
 
         self.to_graph = convert_to_graph_func
