@@ -13,7 +13,7 @@ from IPython.display import clear_output
 from torch_geometric.data import Data
 from utils.descriptors import HybridRLFeaturizer
 
-USE_ENV_INFO = False
+USE_ENV_INFO = True
 ENV_INFO_DIM = 15 if USE_ENV_INFO else 0
 
 
@@ -340,7 +340,8 @@ class Environment:
             r = d-1
         if self.reward_func == "hybrid":
             r1 = -max_f
-            r2 = -np.log10(max_f)
+            target_val = 0.01
+            r2 = -np.log10(max(max_f, 1e-7) / target_val)
             if d:
                 r3 = 10.0
             else:
@@ -402,7 +403,8 @@ class Environment:
             r_f = d_f-1
         if self.reward_func == "hybrid":
             r1 = -max_f
-            r2 = -np.log10(max_f)
+            target_val = 0.01
+            r2 = -np.log10(max(max_f, 1e-7) / target_val)
             if d_f:
                 r3 = 10.0
             else:

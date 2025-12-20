@@ -306,7 +306,6 @@ class PeriodicNetwork_Q(Network):
         kwargs['reduce_output'] = False
 
         super().__init__(**kwargs)
-
         self.em = nn.Linear(1, em_dim)
         self.em_act = nn.Linear(1, em_dim)
         self.env_input_dim = env_input_dim
@@ -329,8 +328,11 @@ class PeriodicNetwork_Q(Network):
                 nn.SiLU(),
                 nn.Linear(64, 1)
             )
-        else:
-            self.tail_mlp = nn.Linear(graph_feat_dim, 1)
+            # torch.nn.init.zeros_(self.tail_mlp[-1].weight)
+            # torch.nn.init.zeros_(self.tail_mlp[-1].bias)
+        # else:
+        #     self.tail_mlp = nn.Linear(graph_feat_dim, 1)
+
 
     def forward(self, data, actions, env_info=None) -> torch.Tensor:
         data_copy = data.clone()
@@ -381,10 +383,12 @@ class PeriodicNetwork_Q(Network):
 
             # 拼接: [Batch, Graph_Dim + 64]
             final_vec = torch.cat([graph_feat, env_emb], dim=1)
-
-            # 打分
             q_value = self.tail_mlp(final_vec)
+            # env_bias = torch.cat([graph_feat, env_emb], dim=1)
+            # q_value = graph_feat + self.tail_mlp(env_bias)
+
         else:
-            q_value = self.tail_mlp(graph_feat)
+            #q_value = self.tail_mlp(graph_feat)
+            q_value = graph_feat
 
         return torch.squeeze(q_value, -1)
