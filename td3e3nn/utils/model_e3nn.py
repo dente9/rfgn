@@ -200,11 +200,9 @@ class Network(torch.nn.Module):
             return x
 
 class PeriodicNetwork_Pi(Network):
-    def __init__(self, em_dim, noise_clip=0.2, scaled=False, expl_mode='state',
-                 env_input_dim=ENV_INFO_DIM, **kwargs):
+    def __init__(self, em_dim, noise_clip=0.2, scaled=True, expl_mode='state',
+                 env_input_dim=ENV_INFO_DIM, max_action=0.1, **kwargs):
 
-        # 【关键设置】关闭父类的强制融合，我们要自己控制融合方式
-        kwargs['late_fusion_dim'] = 0
         kwargs['reduce_output'] = False
 
         super().__init__(**kwargs)
@@ -214,18 +212,16 @@ class PeriodicNetwork_Pi(Network):
         self.em = nn.Linear(1, em_dim)
         self.noise_clip = noise_clip
         self.exploration_mode = expl_mode
+        self.max_action = max_action
 
         # 【环境门控网络】
-        # 输入: env_info
-        # 输出: 标量系数 (Scaling Factor)
-        # 逻辑: 某些环境(如高压)可能需要小步长，某些环境需要大步长
         if self.env_input_dim > 0:
             self.env_gate = nn.Sequential(
                 nn.Linear(env_input_dim, 64),
-                nn.LayerNorm(64), # 稳定输入分布
+                nn.LayerNorm(64),
                 nn.SiLU(),
                 nn.Linear(64, 1),
-                nn.Softplus()     # 保证缩放系数恒为正 (>0)，防止反转方向
+                nn.Sigmoid()
             )
 
     def forward(self, data, env_info=None, noise_scale=None):
@@ -235,9 +231,10 @@ class PeriodicNetwork_Pi(Network):
         if getattr(data_copy, 'batch', None) is None:
             data_copy.batch = torch.zeros(data_copy.num_nodes, dtype=torch.long, device=data_copy.x.device)
 
-        # --- 1. 探索噪声与力特征处理 (保持原逻辑) ---
+        # --- 1. 探索噪声与力特征处理 ---
         if noise_scale is not None and self.exploration_mode == 'state':
             axis, angle = e3nn.o3.rand_axis_angle(1)
+            # 限制旋转角度的噪声幅度
             angle *= 0.5 * noise_scale
             angle = torch.clamp(angle, -self.noise_clip, self.noise_clip)
             rot_matrix = e3nn.o3.axis_angle_to_matrix(axis, angle).to(data_copy.forces_stack.device)
@@ -250,48 +247,49 @@ class PeriodicNetwork_Pi(Network):
         forces_ampl = F.leaky_relu(self.em(data_copy.forces_norm))
         data_copy.x = torch.hstack([data_copy.x, data_copy.forces_stack, forces_ampl])
 
-        # --- 2. 纯粹的图卷积 (得到基础几何动作) ---
-        # 此时不传入 late_feat，让 e3nn 专注处理几何等变性
-        # raw_action: [Nodes, 3] (假设输出是 1x1o)
+        # e3nn 输出，范围可能很大 (-inf, +inf)
         raw_action = super().forward(data_copy, late_feat=None)
 
-        # --- 3. 环境融合 (Scaling) ---
-        final_action = raw_action
+        raw_action = torch.tanh(raw_action)
 
+
+        scale_factor = 1.0
         if self.env_input_dim > 0:
-            # 获取数据
             if env_info is None:
                 env_info = getattr(data_copy, 'env_info', None)
 
-            # [防御性逻辑] 确保一定有 Tensor 输入
             if env_info is not None:
-                # 正常计算
                 env_tensor = env_info.to(dtype=self.em.weight.dtype)
             else:
-                # 补零: [Batch, env_input_dim]
-                # 注意：这里需要构造 batch size 行，env_input_dim 列
                 batch_size = int(data_copy.batch.max()) + 1
                 env_tensor = torch.zeros((batch_size, self.env_input_dim),
                                          dtype=self.em.weight.dtype, device=data_copy.x.device)
 
-            # 计算缩放系数 [Batch, 1]
-            # 加上 0.5 或 1.0 的 bias，保证初始状态下网络依然能动，而不是被缩放到 0
-            scale = self.env_gate(env_tensor) + 0.5
+            # env_gate 输出 (0~1) -> +0.5 -> 范围 (0.5, 1.5)
+            # 意思是：允许在基础步长上浮动 50%
+            current_maxforce = data.global_max_force.to(data.x.device)
+            max_a = 0.6
+            damping = torch.clamp(current_maxforce, max=1.0)
+            real_a = max_a * damping
+            scale_factor = 2 * real_a * self.env_gate(env_tensor) + (1 - real_a)
+            scale_factor = scale_factor[data_copy.batch]
 
-            # 广播到节点 [Nodes, 1]
-            node_scale = scale[data_copy.batch]
+        # [关键步骤 2] 统一计算最终动作
+        # 公式: Tanh方向 * 环境微调系数 * 物理最大步长(0.1)
+        # 结果范围: (-0.15, 0.15) 左右，绝对安全且能动
+        final_action = raw_action * scale_factor * self.max_action
 
-            # 乘法融合：保留方向，调整幅度
-            final_action = raw_action * node_scale
-
-        # --- 4. 后处理 ---
+        # --- 4. 后处理 (Action Noise) ---
         if noise_scale is not None and self.exploration_mode == 'action':
-            epsilon = torch.randn_like(final_action) * noise_scale
-            epsilon = torch.clamp(epsilon, -self.noise_clip, self.noise_clip)
+            # [关键步骤 3] 噪声必须相对于 max_action
+            # 这样噪声大约是 0.01~0.02 级别，合理
+            epsilon = torch.randn_like(final_action) * noise_scale * self.max_action
+            epsilon = torch.clamp(epsilon, -self.noise_clip * self.max_action, self.noise_clip * self.max_action)
             final_action += epsilon
 
-        if self.scaled:
-            final_action = torch.tanh(final_action)
+        # 最后一道防线：硬截断 (防止 env_gate 输出过大)
+        limit = self.max_action * 1.5 # 允许稍微超过一点点 (0.15)
+        final_action = torch.clamp(final_action, -limit, limit)
 
         return Data(x=final_action)
 

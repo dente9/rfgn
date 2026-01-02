@@ -12,6 +12,8 @@ from utils.calcs_func import func_for_calc
 from IPython.display import clear_output
 from torch_geometric.data import Data
 from utils.descriptors import HybridRLFeaturizer
+from collections import deque
+from loguru import logger
 
 USE_ENV_INFO = True
 ENV_INFO_DIM = 15 if USE_ENV_INFO else 0
@@ -139,6 +141,7 @@ class Environment:
                 ):
 
         self.to_graph = convert_to_graph_func
+        self.force_history = deque(maxlen=50)
 
         if reward_func == "hybrid":
             assert r_weights is not None
@@ -206,6 +209,9 @@ class Environment:
         # 注意：这里调用你原本传入的 convert_to_graph_func
         graph = self.to_graph(structure, forces)
 
+        max_f_val = np.max(np.linalg.norm(forces, axis=1))
+        graph.global_max_force = torch.tensor([[max_f_val]], dtype=torch.float32)
+
         # 3. 计算并挂载环境特征
         if self.use_descriptors and self.featurizer:
             # 计算特征: 返回 shape [1, Dim] 的 Tensor
@@ -259,6 +265,13 @@ class Environment:
         # Convert the structure into crystal graph
         # forces = self.current_ase_structure.get_forces()
         # struct_graph = self.to_graph(self.current_structure, forces)
+
+        self.force_history.clear()
+        # [修改] 初始状态也存入
+        init_forces = self.current_ase_structure.get_forces()
+        max_f = max((init_forces**2).sum(axis=1)**0.5)
+        self.force_history.append(max_f)
+
         struct_graph = self._get_observation(self.current_structure, self.current_ase_structure)
 
         self.stop_count = 0
@@ -331,6 +344,38 @@ class Environment:
         max_f = max((forces**2).sum(axis=1)**0.5)
         d = max_f <= self.eps
 
+        self.force_history.append(max_f)
+        force_terminate = False
+        if len(self.force_history) == 50:
+            history = np.array(self.force_history)
+
+            diffs = np.abs(np.diff(history))
+            diff_mean = np.mean(diffs)
+            diff_std = np.std(diffs)
+            if 0.1 < diff_mean < 2.0 and diff_std < 0.5:
+                if history[-1] > history[0] * 0.99:
+                    force_terminate = True
+
+
+            # 只有当平均力较大时（例如 > 5.0），才进行这个检测，避免干扰微调
+            if np.mean(history) > 5.0:
+                # A. 计算符号反转 (检测微观震荡)
+                raw_diffs = np.diff(history)
+                reversals = np.sum((raw_diffs[:-1] * raw_diffs[1:]) < 0)
+
+                # B. 计算前后半段均值 (检测宏观趋势) - [你的建议]
+                mid_point = len(history) // 2
+                mean_1 = np.mean(history[:mid_point]) # 前25步均值
+                mean_2 = np.mean(history[mid_point:]) # 后25步均值
+
+                # 判定逻辑：
+                # 1. 震荡频率高 (超过25次反转)
+                # 2. 且 整体重心没有显著下移 (后半段均值 >= 前半段均值 * 0.99)
+                if reversals > 25:
+                    if mean_2 >= mean_1 * 0.99:
+                        force_terminate = True
+                        logger.warning(f"Ping-Pong detected! Reversals: {reversals}, Mean1: {mean_1:.2f}, Mean2: {mean_2:.2f}")
+
         # Calculate reward
         if self.reward_func == "log_force":
             r = -np.log10(max_f)
@@ -347,6 +392,11 @@ class Environment:
             else:
                 r3 = -1.0 # 保持为负，维持生存压力
             r = self.r_weights[0]*r1+ self.r_weights[1]*r2 + self.r_weights[2]*r3
+
+        if force_terminate:
+            d = True       # 强制结束
+            r = -50.0      # 给予大惩罚 (数值你可以根据实际情况调整)
+            logger.warning("Oscillation Detected! Punishment applied.")
 
         return o2, r, d, a, max_f, s
 

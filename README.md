@@ -14,6 +14,10 @@ uv run python TD3_e3nn.py --path_to_the_main_dir outputs/exp_name --structures_f
 
 git clone https://github.com/dente9/rfgn.git
 
+https://hub.gitmirror.com/
+
+git clone https://hub.gitmirror.com/https://github.com/dente9/rfgn.git
+
 # TensorBoard 启动 & 连通性测试速查
 
 ## 1. 启动命令（容器 / 远程机）

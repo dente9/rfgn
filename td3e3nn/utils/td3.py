@@ -12,6 +12,7 @@ from torch import nn
 from utils.utils import aver_list
 from torch.utils.tensorboard import SummaryWriter
 import datetime
+from loguru import logger
 
 
 class Agent(nn.Module):
@@ -251,24 +252,76 @@ class TD3Agent:
 
         return loss_q
 
+    # def compute_loss_pi(self, batch):
+    #     r"""Calculate loss for Actor.
+
+    #     Parameters
+    #     ----------
+    #     batch : `torch_geometric.data.Batch`
+    #         Minibatch for SGD
+
+    #     Returns
+    #     ----------
+    #     float
+    #         Actor loss
+    #     """
+    #     device = self.device
+    #     o = Batch.from_data_list(batch["state"].tolist()).to(device)
+    #     a_pr = self.ac.pi(o)
+    #     q2_pi = self.ac.q2(o, a_pr)
+    #     return -q2_pi.mean()
     def compute_loss_pi(self, batch):
-        r"""Calculate loss for Actor.
+        r"""Calculate loss for Actor with Adaptive Action Deviation Penalty.
 
-        Parameters
-        ----------
-        batch : `torch_geometric.data.Batch`
-            Minibatch for SGD
-
-        Returns
-        ----------
-        float
-            Actor loss
+        Logic:
+            Total_Loss = -Q + lambda * MSE
+            Where lambda is dynamically adjusted so that: (lambda * MSE) approx (1.0 * |Q|)
         """
         device = self.device
+
+        # 1. 获取状态 (State) 和 实际动作 (Actual Action)
+        # batch["action"] 是环境修正后的物理可行通过动作 (from Replay Buffer)
         o = Batch.from_data_list(batch["state"].tolist()).to(device)
-        a_pr = self.ac.pi(o)
-        q2_pi = self.ac.q2(o, a_pr)
-        return -q2_pi.mean()
+        a_actual = Batch.from_data_list(batch["action"].tolist()).to(device)
+
+        a_pred = self.ac.pi(o)
+
+        # 3. 计算原始 TD3 Actor Loss (即我们希望最大化的 Q 值，Loss 为 -Q)
+        q2_pi = self.ac.q2(o, a_pred)
+        original_loss = -q2_pi.mean()
+
+        # 4. 计算偏差惩罚 (MSE Loss)
+        # 检查是否为 PyG 图结构 (位移保存在 .x 中)
+        if hasattr(a_pred, 'x') and hasattr(a_actual, 'x'):
+            deviation_loss = ((a_pred.x - a_actual.x) ** 2).mean()
+        else:
+            # Fallback: 普通 Tensor
+            deviation_loss = ((a_pred - a_actual) ** 2).mean()
+
+        # 5. [核心] 自适应计算 Lambda (Aux Loss Coefficient)
+        # 希望: lambda * deviation_loss ≈ ratio * |original_loss|
+        target_ratio = 1.0
+
+        # 使用 detach() 截断梯度，只把它们当作数值来计算系数
+        q_mag = torch.abs(original_loss).detach()
+        mse_mag = deviation_loss.detach() + 1e-9 # 加个极小值防止除以0
+
+        auto_lambda = target_ratio * (q_mag / mse_mag)
+
+        auto_lambda = torch.clamp(auto_lambda, min=0.1, max=10000.0)
+
+        total_loss = original_loss + auto_lambda * deviation_loss
+
+        if np.random.rand() < 0.1:
+            print(f"\n[Adaptive Loss] Q_Loss: {original_loss.item():.2f} | "
+                  f"MSE: {deviation_loss.item():.6f} | "
+                  f"Auto_Lambda: {auto_lambda.item():.2f}")
+            pred_norm = a_pred.x.norm(dim=1).mean().item()
+            actual_norm = a_actual.x.norm(dim=1).mean().item()
+            logger.debug(f"\n[DEBUG] Actor想动: {pred_norm:.4f} Å | 环境允许动: {actual_norm:.4f} Å")
+            logger.debug(f"[DEBUG] Q值: {-original_loss.item():.4f}")
+
+        return total_loss
 
     def update(self, data, timer):
         r"""Update Actor and Critic models
