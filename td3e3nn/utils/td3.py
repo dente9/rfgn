@@ -2,7 +2,7 @@ import torch
 from copy import deepcopy
 import numpy as np
 from torch.optim import Adam
-from utils.replay_memory import ReplayMemory
+from utils.replay_memory import ReplayMemory,DualReplayMemory
 import itertools
 from utils.utils import create_plots
 import os
@@ -190,7 +190,12 @@ class TD3Agent:
         self.q_optimizer = Adam(self.q_params, lr=q_lr)
 
         # Replay Buffer
-        self.memory = ReplayMemory(buffer_capacity=replay_size, batch_size = batch_size)
+        #self.memory = ReplayMemory(buffer_capacity=replay_size, batch_size = batch_size)
+        self.memory = DualReplayMemory(
+            buffer_capacity=replay_size,
+            batch_size=batch_size,
+            expert_ratio=0.2  # 20% 是专家数据
+        )
 
         # Initialization of priority weights of structures for training
         self.with_weights = False if len(env_kwards["input_struct_lib"]) == 1 else with_weights
@@ -271,11 +276,15 @@ class TD3Agent:
     #     q2_pi = self.ac.q2(o, a_pr)
     #     return -q2_pi.mean()
     def compute_loss_pi(self, batch):
-        r"""Calculate loss for Actor with Adaptive Action Deviation Penalty.
+        r"""Calculate loss for Actor with Phased Adaptive Action Deviation Penalty.
 
         Logic:
             Total_Loss = -Q + lambda * MSE
-            Where lambda is dynamically adjusted so that: (lambda * MSE) approx (1.0 * |Q|)
+
+            Phase 1 (Hard Constraint):
+                If MSE >= Threshold, lambda is adaptive and large to enforce physical constraints.
+            Phase 2 (Soft Constraint/Finetuning):
+                If MSE < Threshold, lambda is fixed to 1.0 to allow Q-value optimization (RL exploration).
         """
         device = self.device
 
@@ -284,6 +293,7 @@ class TD3Agent:
         o = Batch.from_data_list(batch["state"].tolist()).to(device)
         a_actual = Batch.from_data_list(batch["action"].tolist()).to(device)
 
+        # 2. Actor 前向传播 (Current Policy)
         a_pred = self.ac.pi(o)
 
         # 3. 计算原始 TD3 Actor Loss (即我们希望最大化的 Q 值，Loss 为 -Q)
@@ -298,27 +308,46 @@ class TD3Agent:
             # Fallback: 普通 Tensor
             deviation_loss = ((a_pred - a_actual) ** 2).mean()
 
-        # 5. [核心] 自适应计算 Lambda (Aux Loss Coefficient)
-        # 希望: lambda * deviation_loss ≈ ratio * |original_loss|
-        target_ratio = 1.0
+        # 5. [核心优化] 分阶段计算 Lambda
+        # 阈值设定：基于你之前的日志 MSE~6e-5，我们设 1e-3 为分界线
+        # 当 MSE < 1e-3 时，认为 Actor 已经学会了基础物理规则，可以开始为了 Reward 探索了
+        MSE_THRESHOLD = 1e-3
 
         # 使用 detach() 截断梯度，只把它们当作数值来计算系数
         q_mag = torch.abs(original_loss).detach()
-        mse_mag = deviation_loss.detach() + 1e-9 # 加个极小值防止除以0
+        mse_mag = deviation_loss.detach() + 1e-9 # 防止除零
 
-        auto_lambda = target_ratio * (q_mag / mse_mag)
+        loss_mode = "Adaptive" # 用于日志打印当前所处阶段
 
-        auto_lambda = torch.clamp(auto_lambda, min=0.1, max=10000.0)
+        if mse_mag < MSE_THRESHOLD:
+            # === 阶段二：软约束 (Soft Constraint) ===
+            # 解释：模仿得够好了，现在以 Q Loss 为主。
+            # Lambda 设为 1.0，仅作为正则化项防止动作崩坏，不再阻碍 Q 值优化。
+            auto_lambda = torch.tensor(1.0, device=device)
+            loss_mode = "Soft(1.0)"
+        else:
+            # === 阶段一：硬约束 (Hard Constraint) ===
+            # 解释：动作偏差太大（可能违反物理约束），必须优先满足模仿。
+            target_ratio = 1.0
+            auto_lambda = target_ratio * (q_mag / mse_mag)
+            # 依然保留截断，防止梯度爆炸
+            auto_lambda = torch.clamp(auto_lambda, min=0.1, max=10000.0)
 
+        # 6. 计算总 Loss
         total_loss = original_loss + auto_lambda * deviation_loss
 
+        # 7. 日志输出
         if np.random.rand() < 0.1:
-            print(f"\n[Adaptive Loss] Q_Loss: {original_loss.item():.2f} | "
+            print(f"\n[{loss_mode}] Q_Loss: {original_loss.item():.2f} | "
                   f"MSE: {deviation_loss.item():.6f} | "
-                  f"Auto_Lambda: {auto_lambda.item():.2f}")
-            pred_norm = a_pred.x.norm(dim=1).mean().item()
-            actual_norm = a_actual.x.norm(dim=1).mean().item()
-            logger.debug(f"\n[DEBUG] Actor想动: {pred_norm:.4f} Å | 环境允许动: {actual_norm:.4f} Å")
+                  f"Lambda: {auto_lambda.item():.2f}")
+
+            # 只有是图数据时才计算 norm，防止报错
+            if hasattr(a_pred, 'x'):
+                pred_norm = a_pred.x.norm(dim=1).mean().item()
+                actual_norm = a_actual.x.norm(dim=1).mean().item()
+                logger.debug(f"[DEBUG] Actor想动: {pred_norm:.4f} Å | 环境允许动: {actual_norm:.4f} Å")
+
             logger.debug(f"[DEBUG] Q值: {-original_loss.item():.4f}")
 
         return total_loss
@@ -530,42 +559,92 @@ class TD3Agent:
             print(f"Episode {i+1}/{train_ep[0]} started")
             print(f"{'='*50}")
 
-            # Reset structure to be relaxed
             o, ep_ret, ep_len = self.env.reset(self.trans_coef), 0, 0
             max_norm = []
             c_gr = 0
 
-            # Training relaxation
             for t in range(train_ep[1]):
                 if t_total >= self.start_steps:
+                    # >>> 正常 RL 步骤 <<<
                     if c_gr == N_gr:
-                        # Additional greedy exploration
                         self.ac.pi.noise_clip  = noise_level*2
                         a = self.get_action(o, noise_level)
                         self.ac.pi.noise_clip = self.noise_clip
                         c_gr = 0
                     else:
                         a = self.get_action(o, ((self.noise[1] - self.noise[0])/train_ep[1]) * t + self.noise[0])
+
                     o2, r, d, a2, f, s = self.env.step(a)
+
+                    # 【直接调用】Data 对象自带 .to()，无需辅助函数
+                    self.memory.record(o.to('cpu'), a2, r, o2.to('cpu'), d, is_expert=False)
+
                 else:
-                    #   Fake steps in the beginning of training
-                    o2, r, d, a2, f = self.env.fake_step()
+                    # >>> Warmup 阶段 (BFGS) <<<
+                    o2_list, r_list, d_list, a_list, f_list = self.env.fake_step(prob=1)
+
+                    # 【直接调用】列表推导式直接用 .to('cpu')
+                    # 既然确定 o2_list 里装的是 Data 对象，这里绝对不会报错
+                    o2_list_cpu = [x.to('cpu') for x in o2_list]
+                    curr_o_cpu = o.to('cpu')
+
+                    if len(o2_list_cpu) > 0:
+                        # 构建状态链
+                        s_batch = [curr_o_cpu] + o2_list_cpu[:-1]
+
+                        self.memory.record(
+                            state=s_batch,
+                            action=a_list,
+                            rew=r_list,
+                            next_state=o2_list_cpu,
+                            done=d_list,
+                            is_expert=True
+                        )
+
+                    # 更新变量
+                    o2 = o2_list[-1]
+                    r  = r_list[-1]
+                    d  = d_list[-1]
+                    a2 = a_list[-1]
+                    f  = f_list[-1]
                     s = False
+
+                # ====================================================
+                # 通用更新逻辑
+                # ====================================================
                 t_total +=1
                 ep_ret += r
                 ep_len += 1
                 max_force.append(f)
                 local_reward.append(ep_ret)
 
-                # Store transition in Replay Buffer
-                self.memory.record(o.to('cpu'), a2, r, o2.to('cpu'), d)
-
-                # Sample fake step
+                # ====================================================
+                # 分支 B: 训练过程中的额外采样
+                # ====================================================
                 if (t+1) % nfake == 0:
-                    o2_f, r_f, d_f, a_f, _ = self.env.fake_step()
-                    self.memory.record(o.to('cpu'), a_f, r_f, o2_f.to('cpu'), d_f)
+                    o2_list, r_list, d_list, a_list, _ = self.env.fake_step(prob=0.5)
 
+                    # 【直接调用】
+                    o2_list_cpu = [x.to('cpu') for x in o2_list]
+                    curr_o_cpu = o.to('cpu')
+
+                    if len(o2_list_cpu) > 0:
+                        s_batch = [curr_o_cpu] + o2_list_cpu[:-1]
+
+                        self.memory.record(
+                            state=s_batch,
+                            action=a_list,
+                            rew=r_list,
+                            next_state=o2_list_cpu,
+                            done=d_list,
+                            is_expert=True
+                        )
+
+                # ====================================================
+                # 状态流转
+                # ====================================================
                 o = o2
+
                 print(f"[Step {t_total:6d}] Episode: {i:3d} | Step: {t:3d} | "
                   f"Reward: {r:8.4f} | Total: {ep_ret:10.4f} | Force: {f:8.6f}")
                 self.writer.add_scalar('Train/Reward_Step', r, t_total)
@@ -675,4 +754,3 @@ class TD3Agent:
             self.ac_targ.q2.load_state_dict(checkpoint['ac_q2_t'])
             self.q_optimizer.load_state_dict(checkpoint['q_optim'])
             self.pi_optimizer.load_state_dict(checkpoint['pi_optim'])
-

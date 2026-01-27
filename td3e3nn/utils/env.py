@@ -34,7 +34,7 @@ def get_sturct_lib(name):
         struct = Structure.from_str(item, fmt= "cif")
         if nsite == 1:
             struct.make_supercell([2, 1, 1])
-        if nsite> 4 :
+        if nsite> 30 :
             continue
         lib.append(struct)
     return lib
@@ -401,67 +401,94 @@ class Environment:
         return o2, r, d, a, max_f, s
 
 
-    def fake_step(self):
-        r""" Fake structure relaxation step, where the action is the shift of the atoms directly to the local minimum found by BFGS optimizer.
+    def fake_step(self, prob=0.5):
+        r"""
+        Fake structure relaxation step with sampling.
 
-        Returns
-        ----------
-        o2_f : `torch_geometric.data.Data`
-            Crystal graph of the current structure at the next stage of relaxation
-
-        r_f : `float`
-            Immediate return
-
-        d_f : `bool`
-            Done flag indicating whether the relaxation is complete.
-
-        a_f : `torch_geometric.data.Data`
-            Graph of atomic shifts after correction
-
-        max_f : `float`
-            Maximum force acting on atoms
-
+        Args:
+            prob (float): Sampling probability (0.0 to 1.0).
+                          1.0 means keep all steps, 0.1 means keep ~10%.
+                          The LAST step is ALWAYS kept regardless of prob.
         """
-        prev_pos = self.current_ase_structure.get_positions()
+        # 1. 临时容器，先存储所有轨迹
+        raw_transitions = []
 
-        # Relaxation with BFGS
-        prev_state = self.current_ase_structure.copy()
-        prev_state.calc = self.current_ase_structure.calc
-        dyn = BFGS(prev_state)
+        # 2. 准备 ASE 环境副本
+        atoms_copy = self.current_ase_structure.copy()
+        atoms_copy.calc = self.current_ase_structure.calc
+
+        dyn = BFGS(atoms_copy)
+
+        # 记录每一步开始前的位置
+        last_pos_ref = [atoms_copy.get_positions()]
+
+        # 3. 定义回调函数 (记录所有步骤)
+        def observer(dyn=dyn):
+            # A. 计算基础数据
+            current_pos = atoms_copy.get_positions()
+            forces = atoms_copy.get_forces()
+            prev_pos = last_pos_ref[0]
+
+            # Action
+            diff = current_pos - prev_pos
+            action_tensor = torch.from_numpy(diff)
+            a_f = Data(x=action_tensor)
+
+            # 更新 last_pos
+            last_pos_ref[0] = current_pos.copy()
+
+            # Observation (Next State)
+            struct = AseAtomsAdaptor.get_structure(atoms_copy)
+            o2_f = self._get_observation(struct, atoms_copy)
+
+            # Reward & Done
+            max_f = np.max(np.linalg.norm(forces, axis=1))
+            d_f = max_f <= self.eps
+
+            # Reward Calculation
+            if self.reward_func == "log_force":
+                r_f = -np.log10(max_f)
+            elif self.reward_func == "force":
+                r_f = -max_f
+            elif self.reward_func == "step":
+                r_f = int(d_f) - 1
+            elif self.reward_func == "hybrid":
+                r1 = -max_f
+                target_val = 0.01
+                r2 = -np.log10(max(max_f, 1e-7) / target_val)
+                r3 = 10.0 if d_f else -1.0
+                r_f = self.r_weights[0]*r1 + self.r_weights[1]*r2 + self.r_weights[2]*r3
+            elif self.reward_func == "energy":
+                r_f = -atoms_copy.get_potential_energy()
+            else:
+                r_f = 0.0
+
+            # 暂存 Raw Data
+            raw_transitions.append((o2_f, r_f, d_f, a_f, max_f))
+
+        # 4. 运行 BFGS
+        dyn.attach(observer)
         dyn.run(fmax=self.eps, steps=100)
         clear_output(wait=True)
 
-        # Calculate action, forces, next state
-        a_f = Data(x=torch.from_numpy(prev_state.get_positions() - prev_pos))
-        # forces = prev_state.get_forces()
-        # prev_state_str = AseAtomsAdaptor.get_structure(prev_state)
-        # o2_f = self.to_graph(prev_state_str, forces)
-        prev_state_str = AseAtomsAdaptor.get_structure(prev_state)
-        o2_f = self._get_observation(prev_state_str, prev_state)
-        forces = prev_state.get_forces()
+        # 5. [核心逻辑] 抽样处理
+        sampled_o2, sampled_r, sampled_d, sampled_a, sampled_max_f = [], [], [], [], []
 
-        # Set done flag
-        max_f = max((forces**2).sum(axis=1)**0.5)
-        d_f = max_f <= self.eps
+        total_steps = len(raw_transitions)
 
-        # Calculate reward
-        if self.reward_func == "log_force":
-            r_f = -np.log10(max_f)
-        if self.reward_func == "force":
-            r_f = -max_f
-        if self.reward_func == "step":
-            r_f = d_f-1
-        if self.reward_func == "hybrid":
-            r1 = -max_f
-            target_val = 0.01
-            r2 = -np.log10(max(max_f, 1e-7) / target_val)
-            if d_f:
-                r3 = 10.0
-            else:
-                r3 = -1.0
-            r_f = self.r_weights[0]*r1+ self.r_weights[1]*r2 + self.r_weights[2]*r3
-        if self.reward_func == "energy":
-            r_f = -self.current_ase_structure.get_potential_energy()
+        for i, transition in enumerate(raw_transitions):
+            is_last_step = (i == total_steps - 1)
 
-        return o2_f, r_f, d_f, a_f, max_f
+            # 抽样条件：随机数小于 prob 或者 是最后一步
+            if (np.random.rand() < prob) or is_last_step:
+                o2, r, d, a, mf = transition
+                sampled_o2.append(o2)
+                sampled_r.append(r)
+                sampled_d.append(d)
+                sampled_a.append(a)
+                sampled_max_f.append(mf)
+
+        print(f"Collected fake_step {len(sampled_o2)} steps (Raw: {total_steps})")
+
+        return sampled_o2, sampled_r, sampled_d, sampled_a, sampled_max_f
 

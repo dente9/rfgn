@@ -1,13 +1,11 @@
-import pandas as pd 
-import torch 
-import torch_geometric
+import pandas as pd
+import torch
 from torch_geometric.data import Data
-import numpy as np
 from pymatgen.io.ase import AseAtomsAdaptor
-from typing import Dict, Union
 
 
 atomic_properties_url = "https://raw.githubusercontent.com/lenkakolenka/File/f75f040424669788d658bec8afe16f3e35d44d9e/atomic_properties.csv"
+atomic_properties_url = 'atomic_properties.csv'
 atomic_properties = pd.read_csv(atomic_properties_url, decimal=",", index_col=None)
 atomic_properties = atomic_properties.drop('Unnamed: 0', axis=1)
 mean = atomic_properties.mean()
@@ -29,9 +27,7 @@ params = {
 torch.set_default_dtype(torch.float64)
 
 def to_graph(structure, forces):
-    
     x = torch.vstack([torch.Tensor(embedding[number]) for number in structure.atomic_numbers])
-    
     nbrs = structure.get_all_neighbors(params["radius"])
     if params["max_num_nbr"] is None:
         # we sort the neighbors by distance
@@ -44,8 +40,8 @@ def to_graph(structure, forces):
     edge_src = []
     edge_dst = []
     edge_length = []
-    edge_vec = []  
-    for idx, nbr in enumerate(nbrs): 
+    edge_vec = []
+    for idx, nbr in enumerate(nbrs):
         for atom in nbr:
             edge_src.append(idx)
             edge_dst.append(atom[2])
@@ -53,19 +49,19 @@ def to_graph(structure, forces):
             edge_vec.append((atom[0].coords - structure.cart_coords[idx]).tolist())
     edge_index = torch.vstack([torch.LongTensor(edge_src), torch.LongTensor(edge_dst)])
     pos = torch.tensor(AseAtomsAdaptor.get_atoms(structure).get_positions().tolist())
-    
-    if forces is not None: 
+
+    if forces is not None:
         forces = torch.tensor(forces.tolist())
         forces_norm = forces.norm(dim=1)
         forces_norm_cor = forces_norm + 1*(forces_norm==0)
         forces_stack = forces/forces_norm_cor[:, None]
         forces_norm = forces_norm.unsqueeze(1)
-    else: 
+    else:
         forces_norm = None
-    return Data(x= x, 
-                edge_index=edge_index, 
-                edge_vec = torch.tensor(edge_vec), 
-                edge_length = torch.tensor(edge_length), 
-                pos = pos, 
-                forces_stack = forces_stack, 
-                forces_norm = forces_norm) 
+    return Data(x= x,
+                edge_index=edge_index,
+                edge_vec = torch.tensor(edge_vec),
+                edge_length = torch.tensor(edge_length),
+                pos = pos,
+                forces_stack = forces_stack,
+                forces_norm = forces_norm)
